@@ -51,7 +51,6 @@ const defaultSubjects = ["Maths", "Science", "English", "Physics", "Chemistry", 
 const deepBlue = "#1e3a8a";
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 const STATE_API_URL = `${API_BASE_URL}/api/state`;
-
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Home },
   { id: "students", label: "Students", icon: Users },

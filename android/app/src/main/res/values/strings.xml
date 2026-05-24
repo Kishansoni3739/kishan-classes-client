@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Kishan Classes</string>
+    <string name="title_activity_main">Kishan Classes</string>
+    <string name="package_name">com.kishan.classes</string>
+    <string name="custom_url_scheme">com.kishan.classes</string>
+</resources>

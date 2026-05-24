@@ -1,0 +1,8 @@
+{
+  "appId": "com.kishan.classes",
+  "appName": "Kishan Classes",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
