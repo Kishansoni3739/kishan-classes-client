@@ -493,6 +493,22 @@ function App() {
     setAppState(seedData());
   }
 
+  async function handleUpdateAdmin(username, password) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/update-admin`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...fetchHeaders },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update admin");
+      addToast("Admin credentials updated. Please log in again.");
+      handleLogout();
+    } catch (err) {
+      addToast(err.message, "danger");
+    }
+  }
+
   const fetchHeaders = useMemo(() => {
     return authToken ? { "Authorization": `Bearer ${authToken}` } : {};
   }, [authToken]);
@@ -1134,7 +1150,7 @@ function App() {
               />
             )}
 
-            {activePage === "settings" && <SettingsPage settings={appState.settings} onSave={saveSettings} />}
+            {activePage === "settings" && <SettingsPage settings={appState.settings} onSave={saveSettings} onUpdateAdmin={handleUpdateAdmin} />}
 
             {activePage === "my-portal" && appState.students[0] && (
               <StudentProfile
@@ -2336,69 +2352,96 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
   );
 }
 
-function SettingsPage({ settings, onSave }) {
+function SettingsPage({ settings, onSave, onUpdateAdmin }) {
   const [form, setForm] = useState(settings);
+  const [adminUsername, setAdminUsername] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
 
   useEffect(() => setForm(settings), [settings]);
 
   return (
-    <Panel title="Center Settings" icon={Settings}>
-      <div className="grid gap-5 md:grid-cols-2">
-        <InputField label="Coaching Center Name" value={form.coachingName} onChange={(value) => setForm((prev) => ({ ...prev, coachingName: value }))} />
-        <InputField label="Center Phone" value={form.phone} onChange={(value) => setForm((prev) => ({ ...prev, phone: value }))} />
-        <InputField label="Center Address" value={form.address} onChange={(value) => setForm((prev) => ({ ...prev, address: value }))} />
-        <InputField label="Academic Year" value={form.academicYear} onChange={(value) => setForm((prev) => ({ ...prev, academicYear: value }))} />
-        <InputField label="Fee Due Day" type="number" value={form.feeDueDay} onChange={(value) => setForm((prev) => ({ ...prev, feeDueDay: Number(value) }))} />
-        <InputField label="Logo URL / Base64" value={form.logo} onChange={(value) => setForm((prev) => ({ ...prev, logo: value }))} />
-        <TextAreaField
-          label="Subjects List (comma separated)"
-          value={form.subjects.join(", ")}
-          onChange={(value) => setForm((prev) => ({ ...prev, subjects: value.split(",").map((item) => item.trim()).filter(Boolean) }))}
-        />
-        <div className="rounded-3xl border border-slate-200 p-4">
-          <p className="mb-3 font-semibold">Grade Boundaries</p>
-          <div className="grid gap-3 md:grid-cols-2">
-            {[
-              ["aPlus", "A+"],
-              ["a", "A"],
-              ["b", "B"],
-              ["c", "C"],
-              ["d", "D"],
-            ].map(([key, label]) => (
-              <InputField
-                key={key}
-                label={`${label} threshold`}
-                type="number"
-                value={form.gradeBoundaries[key]}
-                onChange={(value) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    gradeBoundaries: { ...prev.gradeBoundaries, [key]: Number(value) },
-                  }))
-                }
-              />
-            ))}
+    <div className="space-y-6">
+      <Panel title="Center Settings" icon={Settings}>
+        <div className="grid gap-5 md:grid-cols-2">
+          <InputField label="Coaching Center Name" value={form.coachingName} onChange={(value) => setForm((prev) => ({ ...prev, coachingName: value }))} />
+          <InputField label="Center Phone" value={form.phone} onChange={(value) => setForm((prev) => ({ ...prev, phone: value }))} />
+          <InputField label="Center Address" value={form.address} onChange={(value) => setForm((prev) => ({ ...prev, address: value }))} />
+          <InputField label="Academic Year" value={form.academicYear} onChange={(value) => setForm((prev) => ({ ...prev, academicYear: value }))} />
+          <InputField label="Fee Due Day" type="number" value={form.feeDueDay} onChange={(value) => setForm((prev) => ({ ...prev, feeDueDay: Number(value) }))} />
+          <InputField label="Logo URL / Base64" value={form.logo} onChange={(value) => setForm((prev) => ({ ...prev, logo: value }))} />
+          <TextAreaField
+            label="Subjects List (comma separated)"
+            value={form.subjects.join(", ")}
+            onChange={(value) => setForm((prev) => ({ ...prev, subjects: value.split(",").map((item) => item.trim()).filter(Boolean) }))}
+          />
+          <div className="rounded-3xl border border-slate-200 p-4">
+            <p className="mb-3 font-semibold">Grade Boundaries</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              {[
+                ["aPlus", "A+"],
+                ["a", "A"],
+                ["b", "B"],
+                ["c", "C"],
+                ["d", "D"],
+              ].map(([key, label]) => (
+                <InputField
+                  key={key}
+                  label={`${label} threshold`}
+                  type="number"
+                  value={form.gradeBoundaries[key]}
+                  onChange={(value) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      gradeBoundaries: { ...prev.gradeBoundaries, [key]: Number(value) },
+                    }))
+                  }
+                />
+              ))}
+            </div>
           </div>
+          <TextAreaField
+            label="Fee Reminder Template"
+            value={form.templates.feeReminder}
+            onChange={(value) => setForm((prev) => ({ ...prev, templates: { ...prev.templates, feeReminder: value } }))}
+          />
+          <TextAreaField
+            label="Score Report Template"
+            value={form.templates.scoreReport}
+            onChange={(value) => setForm((prev) => ({ ...prev, templates: { ...prev.templates, scoreReport: value } }))}
+          />
         </div>
-        <TextAreaField
-          label="Fee Reminder Template"
-          value={form.templates.feeReminder}
-          onChange={(value) => setForm((prev) => ({ ...prev, templates: { ...prev.templates, feeReminder: value } }))}
-        />
-        <TextAreaField
-          label="Score Report Template"
-          value={form.templates.scoreReport}
-          onChange={(value) => setForm((prev) => ({ ...prev, templates: { ...prev.templates, scoreReport: value } }))}
-        />
-      </div>
-      <div className="mt-5">
-        <button className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white" onClick={() => onSave(form)}>
-          <span className="flex items-center gap-2">
-            <Save size={16} /> Save Settings
-          </span>
-        </button>
-      </div>
-    </Panel>
+        <div className="mt-5">
+          <button className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white" onClick={() => onSave(form)}>
+            <span className="flex items-center gap-2">
+              <Save size={16} /> Save Settings
+            </span>
+          </button>
+        </div>
+      </Panel>
+
+      <Panel title="Admin Credentials" icon={Lock}>
+        <div className="grid gap-5 md:grid-cols-2">
+          <InputField label="New Admin Username" value={adminUsername} onChange={setAdminUsername} />
+          <InputField label="New Admin Password" type="password" value={adminPassword} onChange={setAdminPassword} />
+        </div>
+        <div className="mt-5 text-sm text-slate-500 mb-4">
+          Updating the admin credentials will log you out immediately. You will need to log back in with your new credentials.
+        </div>
+        <div>
+          <button 
+            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50" 
+            disabled={!adminUsername.trim() || !adminPassword.trim()}
+            onClick={() => {
+              if (window.confirm("Are you sure you want to change the admin credentials? You will be logged out.")) {
+                onUpdateAdmin(adminUsername, adminPassword);
+              }
+            }}
+          >
+            Update Credentials
+          </button>
+        </div>
+      </Panel>
+    </div>
   );
 }
 
@@ -3060,7 +3103,7 @@ function LoginPage({ onLogin, error, isLoading }) {
         </form>
         
         <div className="mt-8 pt-6 border-t border-white/10 text-center text-xs text-white/50 space-y-1">
-          <p>Student default: ID / Contact Number</p>
+          <p>Student default: ID / Date of Birth (DDMMYYYY)</p>
         </div>
       </div>
     </div>
