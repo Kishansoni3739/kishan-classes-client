@@ -49,7 +49,7 @@ const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const defaultSubjects = ["Maths", "Science", "English", "Physics", "Chemistry", "Biology", "History", "Geography"];
 const deepBlue = "#1e3a8a";
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://kishan-classes-backend.onrender.com";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 const STATE_API_URL = `${API_BASE_URL}/api/state`;
 
 const navItems = [
