@@ -403,9 +403,9 @@ function generateStudentId(index, year) {
 function seedData() {
   const currentYear = new Date().getFullYear();
   const settings = {
-    coachingName: "BrightPath Coaching Center",
-    address: "14 Knowledge Avenue, Kolkata",
-    phone: "+91 98765 43210",
+    coachingName: "Kishan Classes",
+    address: "Gautam Nagar, Agra",
+    phone: "+91 9389915375",
     logo: "",
     feeDueDay: 5,
     subjects: defaultSubjects,
