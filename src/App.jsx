@@ -29,6 +29,9 @@ import {
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { Filesystem, Directory } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 import {
   Bar,
   BarChart,
@@ -194,10 +197,39 @@ function buildOverdueFeesPdfDoc(appState, overdueRows, titleSuffix = "Overdue Fe
   return doc;
 }
 
-function generateFeesDuePdf(appState) {
+// Cross-platform PDF save: uses Capacitor Filesystem + Share on Android,
+// falls back to jsPDF's built-in doc.save() on desktop browsers.
+async function savePdfDocument(doc, filename) {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const base64Data = doc.output("datauristring").split(",")[1];
+      const written = await Filesystem.writeFile({
+        path: filename,
+        data: base64Data,
+        directory: Directory.Cache,
+      });
+      await Share.share({
+        title: filename,
+        url: written.uri,
+        dialogTitle: "Save or share PDF",
+      });
+      return true;
+    } catch (err) {
+      if (err?.message?.includes("cancel")) return false;
+      console.error("Native PDF save failed:", err);
+      // Last-resort fallback
+      doc.save(filename);
+      return true;
+    }
+  }
+  doc.save(filename);
+  return true;
+}
+
+async function generateFeesDuePdf(appState) {
   const overdueRows = getOverdueFeeRows(appState);
   const doc = buildOverdueFeesPdfDoc(appState, overdueRows);
-  doc.save("overdue-fees-report.pdf");
+  await savePdfDocument(doc, "overdue-fees-report.pdf");
 }
 
 function generateStudentFeesDuePdf(student, appState) {
@@ -653,7 +685,7 @@ function App() {
     });
   }
 
-  function exportFeesReport() {
+  async function exportFeesReport() {
     const rows = filteredFeeGrid.rows
       .map(
         (row) => `<tr><td>${row.student.fullName}</td>${row.cells
@@ -663,20 +695,33 @@ function App() {
       .join("");
 
     const html = `<!doctype html><html><head><title>Fees Report</title><style>body{font-family:Arial;padding:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#eff6ff}</style></head><body><h2>Fees Report</h2><table><thead><tr><th>Student</th>${months.map((m) => `<th>${m}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
-    addToast("Fees report opened in new tab");
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const written = await Filesystem.writeFile({
+          path: "fees-report.html",
+          data: btoa(unescape(encodeURIComponent(html))),
+          directory: Directory.Cache,
+        });
+        await Share.share({ title: "Fees Report", url: written.uri, dialogTitle: "Save or share report" });
+      } catch (err) {
+        if (!err?.message?.includes("cancel")) console.error("Share failed:", err);
+      }
+    } else {
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    }
+    addToast("Fees report generated");
   }
 
-  function exportOverdueFeesPdf() {
-    generateFeesDuePdf(appState);
+  async function exportOverdueFeesPdf() {
+    await generateFeesDuePdf(appState);
     addToast("Overdue fees PDF downloaded");
   }
 
-  function exportStudentProgressPdf(student) {
+  async function exportStudentProgressPdf(student) {
     const { doc, filename } = generateStudentProgressPdf(student, appState);
-    doc.save(filename);
+    await savePdfDocument(doc, filename);
     addToast("Student progress PDF downloaded");
   }
 
