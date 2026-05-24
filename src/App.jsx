@@ -25,6 +25,10 @@ import {
   Users,
   WalletCards,
   X,
+  Lock,
+  User as UserIcon,
+  RefreshCw,
+  LogOut,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -62,6 +66,10 @@ const navItems = [
   { id: "learning", label: "Learning", icon: BookOpen },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "settings", label: "Settings", icon: Settings },
+];
+
+const studentNavItems = [
+  { id: "my-portal", label: "My Portal", icon: UserIcon },
 ];
 
 // Fix #19: UUID fallback for older browsers
@@ -440,7 +448,54 @@ function App() {
   const [feeFilters, setFeeFilters] = useState({ batchId: "all", classGrade: "all", monthKey: "all", status: "all" });
   const [learningFilter, setLearningFilter] = useState({ studentId: "", batchId: "all", subject: "all" });
   const [isDatabaseReady, setIsDatabaseReady] = useState(false);
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem("token") || null);
+  const [authUser, setAuthUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("user")) || null; } catch { return null; }
+  });
+  const [loginError, setLoginError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const isAdmin = authUser?.role === "admin";
+  const currentNavItems = isAdmin ? navItems : studentNavItems;
+
   const saveQueueRef = useRef(Promise.resolve());
+
+  async function handleLogin(username, password) {
+    setIsLoggingIn(true);
+    setLoginError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Login failed");
+      
+      setAuthToken(data.token);
+      setAuthUser(data.user);
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+      setActivePage(data.user.role === "admin" ? "dashboard" : "my-portal");
+    } catch (err) {
+      setLoginError(err.message);
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
+  function handleLogout() {
+    setAuthToken(null);
+    setAuthUser(null);
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setAppState(seedData());
+  }
+
+  const fetchHeaders = useMemo(() => {
+    return authToken ? { "Authorization": `Bearer ${authToken}` } : {};
+  }, [authToken]);
 
   // Fix #7: Stabilize addToast with useCallback
   const addToast = useCallback((title, tone = "success") => {
@@ -463,34 +518,44 @@ function App() {
   const selectedStudent = appState.students.find((student) => student.id === selectedStudentId) ?? null;
   const selectedBatch = appState.batches.find((batch) => batch.id === selectedBatchId) ?? null;
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadStateFromDatabase = useCallback(async (cancelledObj = { cancelled: false }) => {
+    if (!authToken) return;
+    setIsRefreshing(true);
+    try {
+      const response = await fetch(STATE_API_URL, { headers: fetchHeaders });
+      if (!response.ok) {
+        if (response.status === 401) {
+          handleLogout();
+        }
+        throw new Error("Failed to load state");
+      }
 
-    async function loadStateFromDatabase() {
-      try {
-        const response = await fetch(STATE_API_URL);
-        if (!response.ok) {
-          throw new Error("Failed to load state");
-        }
-
-        const data = await response.json();
-        if (!cancelled) {
-          setAppState(data);
-          setIsDatabaseReady(true);
-        }
-      } catch {
-        if (!cancelled) {
-          setIsDatabaseReady(false);
-          addToast("Server storage unavailable. Using temporary in-memory data.", "danger");
-        }
+      const data = await response.json();
+      if (!cancelledObj.cancelled) {
+        setAppState(data);
+        setIsDatabaseReady(true);
+      }
+    } catch {
+      if (!cancelledObj.cancelled) {
+        setIsDatabaseReady(false);
+        addToast("Server storage unavailable. Using temporary in-memory data.", "danger");
+      }
+    } finally {
+      if (!cancelledObj.cancelled) {
+        setIsRefreshing(false);
       }
     }
+  }, [authToken, fetchHeaders, addToast]);
 
-    void loadStateFromDatabase();
+  useEffect(() => {
+    const cancelledObj = { cancelled: false };
+    if (authToken) {
+      loadStateFromDatabase(cancelledObj);
+    }
     return () => {
-      cancelled = true;
+      cancelledObj.cancelled = true;
     };
-  }, []);
+  }, [authToken, loadStateFromDatabase]);
 
   // Fix #6: persistState is now a ref-stable callback
   const persistState = useCallback((nextState) => {
@@ -499,13 +564,14 @@ function App() {
       .then(async () => {
         const response = await fetch(STATE_API_URL, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...fetchHeaders },
           body: JSON.stringify(nextState),
         });
 
         if (!response.ok) {
           const errorText = await response.text();
           console.error("Server Error:", errorText);
+          if (response.status === 401) handleLogout();
         }
         setIsDatabaseReady(true);
       })
@@ -572,8 +638,11 @@ function App() {
     if (!window.confirm(`Are you sure you want to delete "${student?.fullName || 'this student'}"? This will remove all their fee records, test scores, and notifications. This action cannot be undone.`)) return;
     
     try {
-      const res = await fetch(`${API_BASE_URL}/api/students/${studentId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error("Server error");
+      const res = await fetch(`${API_BASE_URL}/api/students/${studentId}`, { method: 'DELETE', headers: fetchHeaders });
+      if (!res.ok) {
+        if (res.status === 401) handleLogout();
+        throw new Error("Server error");
+      }
       setAppState((current) => {
         const draft = structuredClone(current);
         draft.students = draft.students.filter((student) => student.id !== studentId);
@@ -609,8 +678,11 @@ function App() {
   async function deleteNotificationLog(logId) {
     if (!window.confirm("Are you sure you want to delete this notification log? This action cannot be undone.")) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/notification-logs/${logId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error("Server error");
+      const res = await fetch(`${API_BASE_URL}/api/notification-logs/${logId}`, { method: 'DELETE', headers: fetchHeaders });
+      if (!res.ok) {
+        if (res.status === 401) handleLogout();
+        throw new Error("Server error");
+      }
       setAppState((current) => {
         const draft = structuredClone(current);
         draft.notificationLogs = draft.notificationLogs.filter((log) => log.id !== logId);
@@ -817,6 +889,10 @@ function App() {
   const learningView = useMemo(() => buildLearningView(appState, learningFilter), [appState, learningFilter]);
   const notificationCandidates = useMemo(() => buildNotificationCandidates(appState), [appState]);
 
+  if (!authUser) {
+    return <LoginPage onLogin={handleLogin} error={loginError} isLoading={isLoggingIn} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
@@ -841,7 +917,7 @@ function App() {
           </div>
 
           <nav className="flex-1 space-y-2">
-            {navItems.map((item) => {
+            {currentNavItems.map((item) => {
               const Icon = item.icon;
               const active = activePage === item.id;
               return (
@@ -864,22 +940,40 @@ function App() {
           </nav>
 
           {!sidebarCollapsed && (
-            <div className="rounded-3xl bg-white/10 p-4 text-sm text-blue-100">
+            <div className="rounded-3xl bg-white/10 p-4 text-sm text-blue-100 mt-auto mb-4">
               <p className="font-semibold text-white">Academic Year</p>
               <p>{appState.settings.academicYear}</p>
-              <p className="mt-3">Active batches: {appState.batches.length}</p>
+              {isAdmin && <p className="mt-3">Active batches: {appState.batches.length}</p>}
             </div>
           )}
+          
+          <button
+            onClick={handleLogout}
+            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-red-200 transition hover:bg-white/10 ${sidebarCollapsed ? 'justify-center px-0' : ''}`}
+          >
+            <LogOut size={18} />
+            {!sidebarCollapsed && <span className="font-medium">Logout</span>}
+          </button>
         </aside>
 
         <main className="flex-1 overflow-hidden">
-          <div className="border-b border-slate-200 bg-[#1e3a8a] px-4 py-3 text-white md:hidden">
+          <div className="border-b border-slate-200 bg-[#1e3a8a] px-4 py-3 text-white md:hidden flex justify-between items-center">
             <div className="mb-3">
               <p className="text-xs uppercase tracking-[0.3em] text-blue-200">Management</p>
               <h1 className="text-lg font-semibold">{appState.settings.coachingName}</h1>
             </div>
+            <div className="flex gap-2">
+              <button onClick={() => loadStateFromDatabase()} className="rounded-full p-2 text-blue-200 hover:bg-white/10">
+                <RefreshCw size={18} className={isRefreshing ? "animate-spin" : ""} />
+              </button>
+              <button onClick={handleLogout} className="rounded-full p-2 text-red-200 hover:bg-white/10">
+                <LogOut size={18} />
+              </button>
+            </div>
+          </div>
+          <div className="bg-[#1e3a8a] px-4 pb-2 md:hidden">
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {navItems.map((item) => {
+              {currentNavItems.map((item) => {
                 const Icon = item.icon;
                 const active = activePage === item.id;
                 return (
@@ -906,10 +1000,13 @@ function App() {
               <div>
                 <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Coaching Center Suite</p>
                 <h2 className="text-2xl font-semibold text-slate-900">
-                  {navItems.find((item) => item.id === activePage)?.label || "Overview"}
+                  {currentNavItems.find((item) => item.id === activePage)?.label || "Overview"}
                 </h2>
               </div>
               <div className="flex flex-wrap items-center gap-3">
+                <button onClick={() => loadStateFromDatabase()} className="rounded-full p-2 text-slate-500 hover:bg-slate-100 transition hidden md:block" title="Refresh Data">
+                  <RefreshCw size={18} className={isRefreshing ? "animate-spin" : ""} />
+                </button>
                 <div
                   className={`rounded-2xl px-4 py-2 text-sm font-medium ${
                     isDatabaseReady ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
@@ -917,24 +1014,26 @@ function App() {
                 >
                   {isDatabaseReady ? "Server storage connected" : "Waiting for server sync"}
                 </div>
-                <button
-                  className="rounded-2xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white shadow-lg transition hover:bg-blue-800"
-                  onClick={() => {
-                    if (activePage === "students") {
-                      setEditingStudent(null);
-                      setStudentFormOpen(true);
-                    } else if (activePage === "batches") {
-                      setEditingBatch(null);
-                      setBatchFormOpen(true);
-                    } else if (activePage === "learning") {
-                      setScoreModalOpen(true);
-                    }
-                  }}
-                >
-                  <span className="flex items-center gap-2">
-                    <Plus size={16} /> Quick Add
-                  </span>
-                </button>
+                {isAdmin && (
+                  <button
+                    className="rounded-2xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white shadow-lg transition hover:bg-blue-800"
+                    onClick={() => {
+                      if (activePage === "students") {
+                        setEditingStudent(null);
+                        setStudentFormOpen(true);
+                      } else if (activePage === "batches") {
+                        setEditingBatch(null);
+                        setBatchFormOpen(true);
+                      } else if (activePage === "learning") {
+                        setScoreModalOpen(true);
+                      }
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Plus size={16} /> Quick Add
+                    </span>
+                  </button>
+                )}
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
                   Today: {formatDate(new Date().toISOString())}
                 </div>
@@ -1036,6 +1135,18 @@ function App() {
             )}
 
             {activePage === "settings" && <SettingsPage settings={appState.settings} onSave={saveSettings} />}
+
+            {activePage === "my-portal" && appState.students[0] && (
+              <StudentProfile
+                student={appState.students[0]}
+                appState={appState}
+                isAdmin={isAdmin}
+                onExportProgress={exportStudentProgressPdf}
+                onSendFeesPdf={sendStudentFeesPdfToParent}
+                onSendProgressPdf={sendStudentProgressPdfToParent}
+                onDeleteNotification={deleteNotificationLog}
+              />
+            )}
           </div>
         </main>
       </div>
@@ -1585,13 +1696,13 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
       </Panel>
 
       <Panel title="Student Profile" icon={FileText}>
-        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} /> : <EmptyState label="Select a student to open the full profile." />}
+        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} isAdmin={true} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} /> : <EmptyState label="Select a student to open the full profile." />}
       </Panel>
     </div>
   );
 }
 
-function StudentProfile({ student, appState, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification }) {
+function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification }) {
   const batch = appState.batches.find((item) => item.id === student.batchId);
   const feeHistory = appState.feeRecords
     .filter((record) => record.studentId === student.id)
@@ -1655,18 +1766,22 @@ function StudentProfile({ student, appState, onExportProgress, onSendFeesPdf, on
         >
           Download Progress PDF
         </button>
-        <button
-          onClick={() => onSendFeesPdf(student)}
-          className="rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white"
-        >
-          Send Fees PDF
-        </button>
-        <button
-          onClick={() => onSendProgressPdf(student)}
-          className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white"
-        >
-          Send Progress PDF
-        </button>
+        {isAdmin && (
+          <>
+            <button
+              onClick={() => onSendFeesPdf(student)}
+              className="rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white"
+            >
+              Send Fees PDF
+            </button>
+            <button
+              onClick={() => onSendProgressPdf(student)}
+              className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white"
+            >
+              Send Progress PDF
+            </button>
+          </>
+        )}
       </div>
 
       {tab === "fees" && (
@@ -1717,7 +1832,7 @@ function StudentProfile({ student, appState, onExportProgress, onSendFeesPdf, on
                   </div>
                   <p className="mt-2 text-sm text-slate-600">{log.message}</p>
                 </div>
-                <IconButton icon={Trash2} label="Delete" tone="danger" onClick={() => onDeleteNotification(log.id)} />
+                {isAdmin && <IconButton icon={Trash2} label="Delete" tone="danger" onClick={() => onDeleteNotification(log.id)} />}
               </div>
             </div>
           ))}
@@ -2883,6 +2998,73 @@ function InsightTile({ label, value }) {
 
 function SendIcon(props) {
   return <Bell {...props} />;
+}
+
+function LoginPage({ onLogin, error, isLoading }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-900 overflow-hidden relative">
+      {/* Animated gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-slate-900 to-indigo-900 opacity-80" />
+      <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-blue-600/20 blur-[120px] animate-pulse" />
+      <div className="absolute top-[60%] -right-[10%] w-[40%] h-[40%] rounded-full bg-indigo-500/20 blur-[100px] animate-pulse delay-1000" />
+      
+      <div className="relative z-10 w-full max-w-md p-8 md:p-12 mx-4 rounded-3xl bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm border border-white/30">
+            <Lock className="text-white w-8 h-8" />
+          </div>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Welcome Back</h1>
+          <p className="text-blue-200 text-sm">Sign in to your coaching center portal</p>
+        </div>
+        
+        {error && (
+          <div className="mb-6 bg-red-500/20 border border-red-500/50 text-red-100 px-4 py-3 rounded-2xl text-sm backdrop-blur-sm text-center">
+            {error}
+          </div>
+        )}
+        
+        <form onSubmit={(e) => { e.preventDefault(); onLogin(username, password); }} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-2">Username or Student ID</label>
+            <input 
+              type="text" 
+              value={username} 
+              onChange={e => setUsername(e.target.value)}
+              className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 px-5 py-3 rounded-2xl outline-none focus:bg-white/20 focus:border-white/40 transition"
+              placeholder="e.g. admin or CC-2026-001"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-blue-100 mb-2">Password</label>
+            <input 
+              type="password" 
+              value={password} 
+              onChange={e => setPassword(e.target.value)}
+              className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 px-5 py-3 rounded-2xl outline-none focus:bg-white/20 focus:border-white/40 transition"
+              placeholder="••••••••"
+              required
+            />
+          </div>
+          
+          <button 
+            type="submit" 
+            disabled={isLoading || !username || !password}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 text-white font-semibold py-4 rounded-2xl shadow-lg transition duration-200 mt-4 flex justify-center items-center gap-2"
+          >
+            {isLoading ? <RefreshCw className="animate-spin" size={20} /> : "Sign In"}
+          </button>
+        </form>
+        
+        <div className="mt-8 pt-6 border-t border-white/10 text-center text-xs text-white/50 space-y-1">
+          <p>Student default: ID / Contact Number</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default App;
