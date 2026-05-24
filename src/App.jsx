@@ -49,7 +49,8 @@ const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const defaultSubjects = ["Maths", "Science", "English", "Physics", "Chemistry", "Biology", "History", "Geography"];
 const deepBlue = "#1e3a8a";
-const STATE_API_URL = "/api/state";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://kishan-classes-backend.onrender.com";
+const STATE_API_URL = `${API_BASE_URL}/api/state`;
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Home },
@@ -540,7 +541,7 @@ function App() {
     if (!window.confirm(`Are you sure you want to delete "${student?.fullName || 'this student'}"? This will remove all their fee records, test scores, and notifications. This action cannot be undone.`)) return;
     
     try {
-      const res = await fetch(`/api/students/${studentId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/students/${studentId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error("Server error");
       setAppState((current) => {
         const draft = structuredClone(current);
@@ -577,7 +578,7 @@ function App() {
   async function deleteNotificationLog(logId) {
     if (!window.confirm("Are you sure you want to delete this notification log? This action cannot be undone.")) return;
     try {
-      const res = await fetch(`/api/notification-logs/${logId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/notification-logs/${logId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error("Server error");
       setAppState((current) => {
         const draft = structuredClone(current);
