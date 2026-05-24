@@ -973,7 +973,7 @@ function App() {
         </aside>
 
         <main className="flex-1 overflow-hidden">
-          <div className="border-b border-slate-200 bg-[#1e3a8a] px-4 py-3 text-white md:hidden flex justify-between items-center">
+          <div className="bg-[#1e3a8a] px-4 py-3 text-white md:hidden flex justify-between items-center">
             <div className="mb-3">
               <p className="text-xs uppercase tracking-[0.3em] text-blue-200">Management</p>
               <h1 className="text-lg font-semibold">{appState.settings.coachingName}</h1>
