@@ -597,17 +597,15 @@ function App() {
       });
   }, [addToast]);
 
-  // Fix #6: Side-effect moved outside the state updater
+  const latestStateRef = useRef(appState);
+  latestStateRef.current = appState;
+
+  // Fix: Synchronous state resolution to prevent data loss on save
   function updateState(recipe) {
-    let nextState;
-    setAppState((current) => {
-      nextState = recipe(structuredClone(current));
-      return nextState;
-    });
-    // Persist after state update, outside the updater callback
-    queueMicrotask(() => {
-      if (nextState) persistState(nextState);
-    });
+    const nextState = recipe(structuredClone(latestStateRef.current));
+    setAppState(nextState);
+    latestStateRef.current = nextState;
+    persistState(nextState);
   }
 
   function handleStudentSave(formData) {
