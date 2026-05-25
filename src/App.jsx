@@ -1808,7 +1808,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         {[
           ["fees", "Fee Payment History"],
           ["tests", "Test Scores History"],
-          ["notifications", "Notification Log"],
+          ...(isAdmin ? [["notifications", "Notification Log"]] : []),
         ].map(([value, label]) => (
           <button
             key={value}
@@ -1878,7 +1878,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         </div>
       )}
 
-      {tab === "notifications" && (
+      {tab === "notifications" && isAdmin && (
         <div className="space-y-3">
           {notifications.map((log) => (
             <div key={log.id} className="rounded-2xl border border-slate-200 p-3">
@@ -1890,7 +1890,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
                   </div>
                   <p className="mt-2 text-sm text-slate-600">{log.message}</p>
                 </div>
-                {isAdmin && <IconButton icon={Trash2} label="Delete" tone="danger" onClick={() => onDeleteNotification(log.id)} />}
+                <IconButton icon={Trash2} label="Delete" tone="danger" onClick={() => onDeleteNotification(log.id)} />
               </div>
             </div>
           ))}
@@ -2900,7 +2900,7 @@ function TransientNotificationModal({ payload, onClose, onSent }) {
 }
 
 function buildProfileUpdatedPayload(student, coachingName) {
-  const parentName = student.motherName || student.fatherName || "Parent";
+  const parentName = student.fatherName || student.motherName || "Parent";
   const message = [
     `Dear ${parentName},`,
     ``,
@@ -2920,7 +2920,7 @@ function buildProfileUpdatedPayload(student, coachingName) {
 }
 
 function buildNewEnrollmentPayload(student, coachingName) {
-  const parentName = student.motherName || student.fatherName || "Parent";
+  const parentName = student.fatherName || student.motherName || "Parent";
   const message = [
     `Dear ${parentName},`,
     ``,
@@ -2945,7 +2945,7 @@ function buildNewEnrollmentPayload(student, coachingName) {
 }
 
 function buildTestScorePayload(student, score, grade, coachingName) {
-  const parentName = student.motherName || student.fatherName || "Parent";
+  const parentName = student.fatherName || student.motherName || "Parent";
   const percent = Math.round((Number(score.marksObtained) / Number(score.maxMarks || 1)) * 100);
   const message = [
     `Dear ${parentName},`,
@@ -2972,7 +2972,7 @@ function buildTestScorePayload(student, score, grade, coachingName) {
 }
 
 function buildFeePaymentUpdatePayload(student, payment, status, coachingName) {
-  const parentName = student.motherName || student.fatherName || "Parent";
+  const parentName = student.fatherName || student.motherName || "Parent";
   const monthLabel = months[Number((payment.monthKey || "").slice(5, 7)) - 1] || payment.monthKey;
   const message = [
     `Dear ${parentName},`,
@@ -3001,7 +3001,7 @@ function buildFeePaymentUpdatePayload(student, payment, status, coachingName) {
 function buildFeeNotificationPayload(appState, student, record, reminderType) {
   const message = replacePlaceholders(appState.settings.templates.feeReminder, {
     StudentName: student.fullName,
-    ParentName: student.motherName,
+    ParentName: student.fatherName || student.motherName,
     Amount: String(record.amountDue - record.amountPaid),
     Month: months[Number(record.monthKey.slice(5, 7)) - 1],
     DueDate: formatDate(record.dueDate),
@@ -3018,7 +3018,7 @@ function buildFeeNotificationPayload(appState, student, record, reminderType) {
 
 function buildScoreNotificationPayload(appState, student, test, template) {
   const message = replacePlaceholders(template, {
-    ParentName: student?.motherName || "Parent",
+    ParentName: student?.fatherName || student?.motherName || "Parent",
     StudentName: student?.fullName || "",
     Marks: String(test.marksObtained),
     MaxMarks: String(test.maxMarks),
