@@ -461,6 +461,9 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  const initialDataLoadedRef = useRef(false);
+  const prevTestsRef = useRef();
+
   const isAdmin = authUser?.role === "admin";
   const currentNavItems = isAdmin ? navItems : studentNavItems;
 
@@ -553,6 +556,10 @@ function App() {
 
       const data = await response.json();
       if (!cancelledObj.cancelled) {
+        if (!initialDataLoadedRef.current) {
+          prevTestsRef.current = data.tests;
+          initialDataLoadedRef.current = true;
+        }
         setAppState(data);
         setIsDatabaseReady(true);
       }
@@ -567,8 +574,6 @@ function App() {
       }
     }
   }, [authToken, fetchHeaders, addToast]);
-
-  const prevTestsRef = useRef();
 
   useEffect(() => {
     const cancelledObj = { cancelled: false };
@@ -807,14 +812,15 @@ function App() {
   function saveTestScore(score) {
     let computedGrade = "";
     updateState((draft) => {
+      const isAbsent = score.remarks === "Absent on Test Day";
       const percent = (Number(score.marksObtained) / Number(score.maxMarks || 1)) * 100;
-      computedGrade = getGrade(percent, draft.settings.gradeBoundaries);
+      computedGrade = isAbsent ? "-" : getGrade(percent, draft.settings.gradeBoundaries);
       draft.tests.unshift({
         id: uid(),
         ...score,
         batchId: draft.students.find((student) => student.id === score.studentId)?.batchId || "",
         grade: computedGrade,
-        performanceTag: getPerformanceTag(percent),
+        performanceTag: isAbsent ? "Absent" : getPerformanceTag(percent),
       });
       // Delete the scheduled test if this score completes it
       if (score.scheduledTestId) {
@@ -2423,7 +2429,9 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                                   disabled={isPassed}
                                   className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${isPassed ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}
                                   onClick={() => {
-                                    onSaveScore({ ...test, marksObtained: 0, remarks: "Absent on Test Day", scheduledTestId: test.id });
+                                    if (window.confirm(`Are you sure you want to mark ${student.fullName} as absent?`)) {
+                                      onSaveScore({ ...test, marksObtained: 0, remarks: "Absent on Test Day", scheduledTestId: test.id });
+                                    }
                                   }}
                                 >
                                   Absent
