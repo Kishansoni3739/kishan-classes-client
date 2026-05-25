@@ -29,6 +29,7 @@ import {
   User as UserIcon,
   RefreshCw,
   LogOut,
+  PieChart as PieChartIcon,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -36,6 +37,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Filesystem, Directory } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import {
   Bar,
   BarChart,
@@ -425,6 +427,7 @@ function seedData() {
     students: [],
     feeRecords: [],
     tests: [],
+    scheduledTests: [],
     notificationLogs: [],
   };
 }
@@ -439,6 +442,7 @@ function App() {
   const [batchFormOpen, setBatchFormOpen] = useState(false);
   const [paymentModal, setPaymentModal] = useState(null);
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
+  const [scheduleTestModalOpen, setScheduleTestModalOpen] = useState(false);
   const [notificationModal, setNotificationModal] = useState(null);
   const [bulkNotificationType, setBulkNotificationType] = useState(null);
   const [transientNotification, setTransientNotification] = useState(null);
@@ -564,15 +568,55 @@ function App() {
     }
   }, [authToken, fetchHeaders, addToast]);
 
+  const prevTestsRef = useRef();
+
   useEffect(() => {
     const cancelledObj = { cancelled: false };
     if (authToken) {
       loadStateFromDatabase(cancelledObj);
+
+      // Poll every 30 seconds to fetch updates (like new test scores)
+      const intervalId = setInterval(() => {
+        if (!cancelledObj.cancelled) {
+          loadStateFromDatabase(cancelledObj);
+        }
+      }, 30000);
+
+      return () => {
+        cancelledObj.cancelled = true;
+        clearInterval(intervalId);
+      };
     }
     return () => {
       cancelledObj.cancelled = true;
     };
   }, [authToken, loadStateFromDatabase]);
+
+  // Trigger local notification when new scores are added for the logged-in student
+  useEffect(() => {
+    if (!authUser || authUser.role !== "student") return;
+
+    if (prevTestsRef.current && appState.tests) {
+      const prevIds = new Set(prevTestsRef.current.map((t) => t.id));
+      const newTests = appState.tests.filter((t) => t.studentId === authUser.studentId && !prevIds.has(t.id));
+      
+      if (newTests.length > 0) {
+        const notifications = newTests.map((t, index) => ({
+          title: `New Test Score: ${t.subject}`,
+          body: `You scored ${t.marksObtained}/${t.maxMarks} in ${t.testName}`,
+          id: Math.floor(Math.random() * 1000000) + index,
+          schedule: { at: new Date(Date.now() + 1000 * (index + 1)) },
+        }));
+        
+        LocalNotifications.requestPermissions().then((result) => {
+          if (result.display === 'granted') {
+            LocalNotifications.schedule({ notifications });
+          }
+        });
+      }
+    }
+    prevTestsRef.current = appState.tests;
+  }, [appState.tests, authUser]);
 
   // Fix #6: persistState is now a ref-stable callback
   const persistState = useCallback((nextState) => {
@@ -772,6 +816,10 @@ function App() {
         grade: computedGrade,
         performanceTag: getPerformanceTag(percent),
       });
+      // Delete the scheduled test if this score completes it
+      if (score.scheduledTestId) {
+        draft.scheduledTests = draft.scheduledTests.filter(t => t.id !== score.scheduledTestId);
+      }
       return draft;
     });
     setScoreModalOpen(false);
@@ -783,6 +831,44 @@ function App() {
       const coachingName = latestStateRef.current.settings.coachingName;
       setTransientNotification(buildTestScorePayload(student, score, computedGrade, coachingName));
     }
+  }
+
+  function handleDeleteScheduledTestGroup(groupInfo) {
+    updateState((draft) => {
+      draft.scheduledTests = draft.scheduledTests.filter(
+        (t) =>
+          !(
+            t.batchId === groupInfo.batchId &&
+            t.subject === groupInfo.subject &&
+            t.testName === groupInfo.testName &&
+            t.testDate === groupInfo.testDate
+          )
+      );
+      return draft;
+    });
+    addToast("Scheduled test deleted");
+  }
+
+  function handleScheduleTestSave(testData, studentIds) {
+    updateState((draft) => {
+      studentIds.forEach(studentId => {
+        const student = draft.students.find((s) => s.id === studentId);
+        if (student) {
+          draft.scheduledTests.push({
+            id: uid(),
+            studentId,
+            batchId: student.batchId || "",
+            subject: testData.subject,
+            testName: testData.testName,
+            testDate: testData.testDate,
+            maxMarks: testData.maxMarks
+          });
+        }
+      });
+      return draft;
+    });
+    setScheduleTestModalOpen(false);
+    addToast("Test(s) scheduled successfully");
   }
 
   function saveSettings(nextSettings) {
@@ -1164,8 +1250,11 @@ function App() {
                 learningView={learningView}
                 filter={learningFilter}
                 setFilter={setLearningFilter}
-                onAddScore={() => setScoreModalOpen(true)}
+                onAddScore={(test) => setScoreModalOpen(test || true)}
+                onSaveScore={saveTestScore}
+                onScheduleTest={() => setScheduleTestModalOpen(true)}
                 onSendScore={(payload) => setNotificationModal(payload)}
+                onDeleteGroup={handleDeleteScheduledTestGroup}
               />
             )}
 
@@ -1235,6 +1324,7 @@ function App() {
       {scoreModalOpen && (
         <ScoreEntryModal
           appState={appState}
+          initialData={typeof scoreModalOpen === "object" ? scoreModalOpen : null}
           onClose={() => setScoreModalOpen(false)}
           onSave={saveTestScore}
         />
@@ -1258,6 +1348,14 @@ function App() {
           candidates={notificationCandidates}
           onClose={() => setBulkNotificationType(null)}
           onOpenNotification={setNotificationModal}
+        />
+      )}
+
+      {scheduleTestModalOpen && (
+        <ScheduleTestModal
+          appState={appState}
+          onClose={() => setScheduleTestModalOpen(false)}
+          onSave={handleScheduleTestSave}
         />
       )}
 
@@ -1541,7 +1639,16 @@ function buildLearningView(appState, filter) {
     return acc;
   }, {});
 
-  return { studentScores, trend, subjectAverages, strongest, weakest, improvement, batchAnalytics, subjectRankings };
+  const tags = { excellent: 0, good: 0, average: 0, needsImprovement: 0 };
+  studentScores.forEach((test) => {
+    const p = (test.marksObtained / test.maxMarks) * 100;
+    if (p >= 90) tags.excellent++;
+    else if (p >= 75) tags.good++;
+    else if (p >= 50) tags.average++;
+    else tags.needsImprovement++;
+  });
+
+  return { studentScores, trend, subjectAverages, strongest, weakest, improvement, batchAnalytics, subjectRankings, tags };
 }
 
 function buildNotificationCandidates(appState) {
@@ -1869,8 +1976,8 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
                     {test.subject} • {formatDate(test.testDate)}
                   </p>
                 </div>
-                <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
-                  {test.marksObtained}/{test.maxMarks}
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${test.remarks === "Absent on Test Day" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}`}>
+                  {test.remarks === "Absent on Test Day" ? "Absent" : `${test.marksObtained}/${test.maxMarks}`}
                 </span>
               </div>
             </div>
@@ -2119,16 +2226,44 @@ function FeesPage({ appState, feeGrid, feeFilters, setFeeFilters, onCellClick, o
   );
 }
 
-function LearningPage({ appState, learningView, filter, setFilter, onAddScore, onSendScore }) {
+function LearningPage({ appState, learningView, filter, setFilter, onAddScore, onSaveScore, onScheduleTest, onSendScore, onDeleteGroup }) {
+  const groupedTestsMap = {};
+  (appState.scheduledTests || []).forEach((test) => {
+    const key = `${test.batchId}_${test.subject}_${test.testName}_${test.testDate}`;
+    if (!groupedTestsMap[key]) {
+      groupedTestsMap[key] = {
+        key,
+        batchId: test.batchId,
+        subject: test.subject,
+        testName: test.testName,
+        testDate: test.testDate,
+        maxMarks: test.maxMarks,
+        tests: [],
+      };
+    }
+    groupedTestsMap[key].tests.push(test);
+  });
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const groupedTests = Object.values(groupedTestsMap)
+    .filter((g) => g.testDate >= todayStr)
+    .sort((a, b) => new Date(a.testDate) - new Date(b.testDate));
+
+  const [expandedGroup, setExpandedGroup] = useState(null);
+
   return (
     <div className="space-y-6">
       <Panel
         title="Learning Tracker"
         icon={BookOpen}
         action={
-          <button className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white" onClick={onAddScore}>
-            Enter Score
-          </button>
+          <div className="flex items-center gap-2">
+            <button className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700" onClick={onScheduleTest}>
+              Schedule Test
+            </button>
+            <button className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white" onClick={() => onAddScore()}>
+              Enter Score
+            </button>
+          </div>
         }
       >
         <div className="grid gap-3 md:grid-cols-3">
@@ -2184,33 +2319,37 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                 <XAxis dataKey="subject" />
                 <YAxis domain={[0, 100]} />
                 <Tooltip />
-                <Bar dataKey="average" fill="#2563eb" radius={[8, 8, 0, 0]} animationDuration={900} />
+                <Bar dataKey="average" fill={deepBlue} radius={[4, 4, 0, 0]} animationDuration={900} />
               </BarChart>
             </ResponsiveContainer>
           </ChartBox>
         </Panel>
 
-        <Panel title="Batch-level Analytics" icon={GraduationCap}>
-          <div className="space-y-4">
-            {learningView.batchAnalytics.map((item) => (
-              <div key={item.batch.id} className="rounded-2xl border border-slate-200 p-4">
-                <p className="font-semibold">{item.batch.name}</p>
-                <p className="mt-1 text-sm text-slate-500">
-                  {item.subjectSummary.map((subject) => `${subject.subject}: ${subject.average}%`).join(" • ") || "No tests yet"}
-                </p>
-                <div className="mt-4 h-48">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={item.passFail} dataKey="value" nameKey="name" outerRadius={60}>
-                        <Cell fill="#10b981" />
-                        <Cell fill="#ef4444" />
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            ))}
+        <Panel title="Performance Distribution" icon={PieChartIcon}>
+          <div className="flex h-[280px] items-center justify-center rounded-3xl bg-slate-50">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: "Excellent (90%+)", value: learningView.tags.excellent },
+                    { name: "Good (75-89%)", value: learningView.tags.good },
+                    { name: "Average (50-74%)", value: learningView.tags.average },
+                    { name: "Needs Improvement (<50%)", value: learningView.tags.needsImprovement },
+                  ]}
+                  innerRadius={60}
+                  outerRadius={100}
+                  paddingAngle={2}
+                  dataKey="value"
+                  animationDuration={900}
+                >
+                  <Cell fill="#10b981" />
+                  <Cell fill="#3b82f6" />
+                  <Cell fill="#f59e0b" />
+                  <Cell fill="#ef4444" />
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
           </div>
         </Panel>
       </div>
@@ -2230,6 +2369,87 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
           </div>
         </Panel>
 
+        {groupedTests.length > 0 && (
+          <Panel title="Scheduled Tests" icon={FileText}>
+            <div className="space-y-3">
+              {groupedTests.map((group) => {
+                const isExpanded = expandedGroup === group.key;
+                const batchName = appState.batches.find((b) => b.id === group.batchId)?.name || "Unknown Batch";
+                const isPassed = group.testDate < todayStr;
+                
+                return (
+                  <div key={group.key} className="rounded-2xl border border-slate-200 overflow-hidden">
+                    <div 
+                      className="bg-slate-50 p-4 cursor-pointer hover:bg-slate-100 transition flex items-center justify-between"
+                      onClick={() => setExpandedGroup(isExpanded ? null : group.key)}
+                    >
+                      <div>
+                        <p className="font-medium text-slate-900">{group.subject} - {group.testName}</p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          {formatDate(group.testDate)} • {batchName} • {group.tests.length} Students
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          disabled={isPassed}
+                          className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${isPassed ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-red-100 text-red-800 hover:bg-red-200"}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if(window.confirm("Are you sure you want to delete this scheduled test for all students?")) {
+                                onDeleteGroup(group);
+                            }
+                          }}
+                        >
+                          Delete Test
+                        </button>
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="p-4 border-t border-slate-200 bg-white space-y-2">
+                        {group.tests.map((test) => {
+                          const student = appState.students.find((item) => item.id === test.studentId);
+                          if (!student) return null;
+                          return (
+                            <div key={test.id} className="flex items-center justify-between p-2 rounded-xl border border-slate-100 bg-slate-50/50">
+                              <span className="text-sm font-medium">{student.fullName}</span>
+                              <div className="flex gap-2">
+                                <button
+                                  className="rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-semibold text-blue-800 hover:bg-blue-200"
+                                  onClick={() => onAddScore(test)}
+                                >
+                                  Enter Score
+                                </button>
+                                <button
+                                  disabled={isPassed}
+                                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${isPassed ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}
+                                  onClick={() => {
+                                    onSaveScore({ ...test, marksObtained: 0, remarks: "Absent on Test Day", scheduledTestId: test.id });
+                                  }}
+                                >
+                                  Absent
+                                </button>
+                                <button
+                                  disabled={isPassed}
+                                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${isPassed ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"}`}
+                                  onClick={() => {
+                                    onSendScore(buildTestPrepNotificationPayload(appState, student, test));
+                                  }}
+                                >
+                                  Notify
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Panel>
+        )}
+
         <Panel title="Full Test History" icon={FileText}>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -2247,7 +2467,6 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
               <tbody>
                 {[...learningView.studentScores].reverse().map((test) => {
                   const student = appState.students.find((item) => item.id === test.studentId);
-                  // Fix #3: Skip tests with orphaned/deleted students
                   if (!student) return null;
                   return (
                     <tr key={test.id} className="border-t border-slate-100">
@@ -2256,7 +2475,11 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                       <td className="py-3">{test.testName}</td>
                       <td className="py-3">{formatDate(test.testDate)}</td>
                       <td className="py-3">
-                        {test.marksObtained}/{test.maxMarks}
+                        {test.remarks === "Absent on Test Day" ? (
+                          <span className="text-red-600 font-semibold">Absent</span>
+                        ) : (
+                          `${test.marksObtained}/${test.maxMarks}`
+                        )}
                       </td>
                       <td className="py-3">{test.grade}</td>
                       <td className="py-3">
@@ -2341,7 +2564,6 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
               .slice(0, 8)
               .map((test) => {
                 const student = appState.students.find((item) => item.id === test.studentId);
-                // Fix #3: Skip tests with orphaned/deleted students
                 if (!student) return null;
                 return (
                   <div key={test.id} className="rounded-2xl border border-slate-200 p-4">
@@ -2487,6 +2709,139 @@ function SettingsPage({ settings, onSave, onUpdateAdmin }) {
   );
 }
 
+function ScheduleTestModal({ appState, onClose, onSave }) {
+  const [form, setForm] = useState({
+    batchId: "all",
+    subject: appState.settings.subjects[0] || "",
+    testName: "",
+    testDate: new Date().toISOString().slice(0, 10),
+    maxMarks: 100,
+  });
+
+  const [selectedStudents, setSelectedStudents] = useState([]);
+  const [error, setError] = useState("");
+
+  const handleSave = () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (form.testDate < todayStr) {
+      setError("Cannot schedule a test for a past date.");
+      return;
+    }
+    setError("");
+    onSave(form, selectedStudents);
+  };
+
+  const filteredStudents = useMemo(() => {
+    return form.batchId === "all"
+      ? appState.students
+      : appState.students.filter((s) => s.batchId === form.batchId);
+  }, [form.batchId, appState.students]);
+
+  useEffect(() => {
+    setSelectedStudents(filteredStudents.map(s => s.id));
+  }, [filteredStudents]);
+
+  const toggleStudent = (id) => {
+    if (selectedStudents.includes(id)) {
+      setSelectedStudents(prev => prev.filter(sId => sId !== id));
+    } else {
+      setSelectedStudents(prev => [...prev, id]);
+    }
+  };
+
+  return (
+    <ModalShell title="Schedule Test" onClose={onClose}>
+      <div className="grid gap-4 md:grid-cols-2">
+        <SelectField
+          label="Batch"
+          value={form.batchId}
+          onChange={(value) => setForm((prev) => ({ ...prev, batchId: value }))}
+          options={[{ value: "all", label: "All Students" }, ...appState.batches.map(b => ({ value: b.id, label: b.name }))]}
+        />
+        <SelectField
+          label="Subject"
+          value={form.subject}
+          onChange={(value) => setForm((prev) => ({ ...prev, subject: value }))}
+          options={appState.settings.subjects}
+        />
+        <InputField label="Test Name" value={form.testName} onChange={(value) => setForm((prev) => ({ ...prev, testName: value }))} />
+        <InputField label="Test Date" type="date" value={form.testDate} onChange={(value) => setForm((prev) => ({ ...prev, testDate: value }))} />
+        <InputField label="Max Marks" type="number" value={form.maxMarks} onChange={(value) => setForm((prev) => ({ ...prev, maxMarks: Number(value) }))} />
+      </div>
+
+      {error && <p className="mt-4 text-sm font-medium text-red-600">{error}</p>}
+
+      <div className="mt-6">
+        <label className="mb-2 block text-sm font-medium text-slate-700">Select Students</label>
+        <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200 p-2 space-y-1">
+          {filteredStudents.map(student => (
+            <label key={student.id} className="flex items-center gap-2 rounded-lg p-2 hover:bg-slate-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedStudents.includes(student.id)}
+                onChange={() => toggleStudent(student.id)}
+                className="rounded border-slate-300"
+              />
+              <span className="text-sm font-medium">{student.fullName}</span>
+            </label>
+          ))}
+          {filteredStudents.length === 0 && (
+            <div className="p-2 text-sm text-slate-500">No students found.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-6 flex justify-end gap-3">
+        <button className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium" onClick={onClose}>
+          Cancel
+        </button>
+        <button 
+          className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          onClick={handleSave}
+          disabled={!form.testName || selectedStudents.length === 0}
+        >
+          Schedule Test
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function TransientNotificationModal({ payload, onClose, onSent }) {
+  const whatsappUrl = `https://wa.me/${(payload.phone || "").replace(/\D/g, "")}?text=${encodeURIComponent(payload.message)}`;
+  return (
+    <ModalShell title={payload.title} onClose={onClose} width="max-w-2xl">
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-sm text-amber-800">
+          <Bell size={16} className="shrink-0" />
+          <span>📱 Temporary notification — <strong>not saved</strong> to logs or database</span>
+        </div>
+        <div className="rounded-3xl bg-slate-50 p-4">
+          <p className="mb-2 text-sm font-medium text-slate-500">Message Preview</p>
+          <p className="whitespace-pre-wrap text-slate-800">{payload.message}</p>
+        </div>
+        <div className="flex justify-end gap-3">
+          <button
+            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+            onClick={onClose}
+          >
+            Skip
+          </button>
+          <a
+            href={whatsappUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition flex items-center gap-2"
+            onClick={onSent}
+          >
+            <SendIcon size={14} /> Send via WhatsApp
+          </a>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 function StudentFormModal({ appState, initialValue, onClose, onSave }) {
   const defaultAdmissionDate = new Date().toISOString().slice(0, 10);
   const defaultFeeDueDay = Number(defaultAdmissionDate.slice(8, 10));
@@ -2601,7 +2956,6 @@ function StudentFormModal({ appState, initialValue, onClose, onSave }) {
           className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           disabled={!form.fullName.trim() || !form.monthlyFeeAmount}
           onClick={() => {
-            // Fix #8: Student form validation
             if (!form.fullName.trim()) { alert("Student name is required."); return; }
             if (!form.monthlyFeeAmount || form.monthlyFeeAmount <= 0) { alert("Monthly fee amount must be greater than 0."); return; }
             if (form.feeDueDay < 1 || form.feeDueDay > 28) { alert("Fee due day must be between 1 and 28."); return; }
@@ -2665,7 +3019,6 @@ function BatchFormModal({ initialValue, onClose, onSave }) {
           className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           disabled={!form.name.trim()}
           onClick={() => {
-            // Fix #9: Batch form validation
             if (!form.name.trim()) { alert("Batch name is required."); return; }
             if (!form.timing.trim()) { alert("Timing is required (e.g. '4:00 PM - 5:30 PM')."); return; }
             if (form.maxStudents < 1) { alert("Max students must be at least 1."); return; }
@@ -2709,15 +3062,16 @@ function PaymentModal({ record, student, onClose, onSave }) {
   );
 }
 
-function ScoreEntryModal({ appState, onClose, onSave }) {
+function ScoreEntryModal({ appState, initialData, onClose, onSave }) {
   const [form, setForm] = useState({
-    studentId: appState.students[0]?.id || "",
-    subject: appState.settings.subjects[0] || "",
-    testName: "",
-    testDate: new Date().toISOString().slice(0, 10),
-    maxMarks: 100,
+    studentId: initialData?.studentId || appState.students[0]?.id || "",
+    subject: initialData?.subject || appState.settings.subjects[0] || "",
+    testName: initialData?.testName || "",
+    testDate: initialData?.testDate || new Date().toISOString().slice(0, 10),
+    maxMarks: initialData?.maxMarks || 100,
     marksObtained: 0,
     remarks: "",
+    scheduledTestId: initialData?.id || null
   });
 
   const percent = Math.round((Number(form.marksObtained) / Number(form.maxMarks || 1)) * 100);
@@ -2829,7 +3183,6 @@ function BulkNotificationModal({ appState, type, candidates, onClose, onOpenNoti
               <div className="mt-3 space-y-3">
                 {item.tests.map((test) => {
                   const student = appState.students.find((entry) => entry.id === test.studentId);
-                  // Fix #3: Skip tests with orphaned/deleted students
                   if (!student) return null;
                   return (
                     <div key={test.id} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3">
@@ -2854,46 +3207,6 @@ function BulkNotificationModal({ appState, type, candidates, onClose, onOpenNoti
             </div>
           ))
         )}
-      </div>
-    </ModalShell>
-  );
-}
-
-// ─────────────────────────────────────────────────────────
-// Transient (non-persisted) notification modal for parent
-// WhatsApp updates — NOT saved to notification log or DB
-// ─────────────────────────────────────────────────────────
-
-function TransientNotificationModal({ payload, onClose, onSent }) {
-  const whatsappUrl = `https://wa.me/${(payload.phone || "").replace(/\D/g, "")}?text=${encodeURIComponent(payload.message)}`;
-  return (
-    <ModalShell title={payload.title} onClose={onClose} width="max-w-2xl">
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-sm text-amber-800">
-          <Bell size={16} className="shrink-0" />
-          <span>📱 Temporary notification — <strong>not saved</strong> to logs or database</span>
-        </div>
-        <div className="rounded-3xl bg-slate-50 p-4">
-          <p className="mb-2 text-sm font-medium text-slate-500">Message Preview</p>
-          <p className="whitespace-pre-wrap text-slate-800">{payload.message}</p>
-        </div>
-        <div className="flex justify-end gap-3">
-          <button
-            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
-            onClick={onClose}
-          >
-            Skip
-          </button>
-          <a
-            href={whatsappUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition flex items-center gap-2"
-            onClick={onSent}
-          >
-            <SendIcon size={14} /> Send via WhatsApp
-          </a>
-        </div>
       </div>
     </ModalShell>
   );
@@ -2993,6 +3306,31 @@ function buildFeePaymentUpdatePayload(student, payment, status, coachingName) {
     title: `Fee Update • ${student.fullName}`,
     studentId: student.id,
     type: "Fee Update",
+    phone: student.parentWhatsapp,
+    message,
+  };
+}
+
+function buildTestPrepNotificationPayload(appState, student, test) {
+  const parentName = student.fatherName || student.motherName || "Parent";
+  const message = [
+    `Dear ${parentName},`,
+    ``,
+    `📅 *Upcoming Test Scheduled* for *${student.fullName}*:`,
+    ``,
+    `• Subject: ${test.subject}`,
+    `• Test: ${test.testName}`,
+    `• Date: ${formatDate(test.testDate)}`,
+    `• Max Marks: ${test.maxMarks}`,
+    ``,
+    `Please ensure your child is prepared! 📚`,
+    ``,
+    `— ${appState.settings.coachingName}`
+  ].join("\n");
+  return {
+    title: `Test Prep • ${student.fullName}`,
+    studentId: student.id,
+    type: "Test Prep",
     phone: student.parentWhatsapp,
     message,
   };
