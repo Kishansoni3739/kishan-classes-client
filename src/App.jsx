@@ -441,6 +441,7 @@ function App() {
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [notificationModal, setNotificationModal] = useState(null);
   const [bulkNotificationType, setBulkNotificationType] = useState(null);
+  const [transientNotification, setTransientNotification] = useState(null);
   const [editingStudent, setEditingStudent] = useState(null);
   const [editingBatch, setEditingBatch] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -609,12 +610,15 @@ function App() {
   }
 
   function handleStudentSave(formData) {
+    const isEditing = !!editingStudent;
+    let savedStudent = null;
     updateState((draft) => {
-      if (editingStudent) {
+      if (isEditing) {
         const index = draft.students.findIndex((item) => item.id === editingStudent.id);
         const updatedStudent = { ...draft.students[index], ...formData };
         draft.students[index] = updatedStudent;
         draft.feeRecords = syncStudentFeeRecords(draft.feeRecords, editingStudent, updatedStudent);
+        savedStudent = updatedStudent;
       } else {
         const student = {
           id: uid(),
@@ -623,12 +627,23 @@ function App() {
         };
         draft.students.push(student);
         draft.feeRecords.push(...createFeeRecordsForStudent(student));
+        savedStudent = student;
       }
       return draft;
     });
     setStudentFormOpen(false);
     setEditingStudent(null);
-    addToast(editingStudent ? "Student updated" : "Student added");
+    addToast(isEditing ? "Student updated" : "Student added");
+
+    // Trigger transient (non-persisted) WhatsApp notification to parent
+    if (savedStudent && savedStudent.parentWhatsapp) {
+      const coachingName = latestStateRef.current.settings.coachingName;
+      if (isEditing) {
+        setTransientNotification(buildProfileUpdatedPayload(savedStudent, coachingName));
+      } else {
+        setTransientNotification(buildNewEnrollmentPayload(savedStudent, coachingName));
+      }
+    }
   }
 
   function handleBatchSave(formData) {
@@ -734,22 +749,40 @@ function App() {
     });
     setPaymentModal(null);
     addToast("Payment updated");
+
+    // Trigger transient (non-persisted) WhatsApp notification to parent
+    const student = latestStateRef.current.students.find((s) => s.id === payment.studentId);
+    if (student && student.parentWhatsapp) {
+      const finalStatus = Number(payment.amountPaid) >= Number(payment.amountDue)
+        ? "Paid" : Number(payment.amountPaid) > 0 ? "Partial" : "Pending";
+      const coachingName = latestStateRef.current.settings.coachingName;
+      setTransientNotification(buildFeePaymentUpdatePayload(student, payment, finalStatus, coachingName));
+    }
   }
 
   function saveTestScore(score) {
+    let computedGrade = "";
     updateState((draft) => {
       const percent = (Number(score.marksObtained) / Number(score.maxMarks || 1)) * 100;
+      computedGrade = getGrade(percent, draft.settings.gradeBoundaries);
       draft.tests.unshift({
         id: uid(),
         ...score,
         batchId: draft.students.find((student) => student.id === score.studentId)?.batchId || "",
-        grade: getGrade(percent, draft.settings.gradeBoundaries),
+        grade: computedGrade,
         performanceTag: getPerformanceTag(percent),
       });
       return draft;
     });
     setScoreModalOpen(false);
     addToast("Test score saved");
+
+    // Trigger transient (non-persisted) WhatsApp notification to parent
+    const student = latestStateRef.current.students.find((s) => s.id === score.studentId);
+    if (student && student.parentWhatsapp) {
+      const coachingName = latestStateRef.current.settings.coachingName;
+      setTransientNotification(buildTestScorePayload(student, score, computedGrade, coachingName));
+    }
   }
 
   function saveSettings(nextSettings) {
@@ -1225,6 +1258,17 @@ function App() {
           candidates={notificationCandidates}
           onClose={() => setBulkNotificationType(null)}
           onOpenNotification={setNotificationModal}
+        />
+      )}
+
+      {transientNotification && (
+        <TransientNotificationModal
+          payload={transientNotification}
+          onClose={() => setTransientNotification(null)}
+          onSent={() => {
+            addToast("WhatsApp message opened for parent");
+            setTransientNotification(null);
+          }}
         />
       )}
     </div>
@@ -2813,6 +2857,145 @@ function BulkNotificationModal({ appState, type, candidates, onClose, onOpenNoti
       </div>
     </ModalShell>
   );
+}
+
+// ─────────────────────────────────────────────────────────
+// Transient (non-persisted) notification modal for parent
+// WhatsApp updates — NOT saved to notification log or DB
+// ─────────────────────────────────────────────────────────
+
+function TransientNotificationModal({ payload, onClose, onSent }) {
+  const whatsappUrl = `https://wa.me/${(payload.phone || "").replace(/\D/g, "")}?text=${encodeURIComponent(payload.message)}`;
+  return (
+    <ModalShell title={payload.title} onClose={onClose} width="max-w-2xl">
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-sm text-amber-800">
+          <Bell size={16} className="shrink-0" />
+          <span>📱 Temporary notification — <strong>not saved</strong> to logs or database</span>
+        </div>
+        <div className="rounded-3xl bg-slate-50 p-4">
+          <p className="mb-2 text-sm font-medium text-slate-500">Message Preview</p>
+          <p className="whitespace-pre-wrap text-slate-800">{payload.message}</p>
+        </div>
+        <div className="flex justify-end gap-3">
+          <button
+            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+            onClick={onClose}
+          >
+            Skip
+          </button>
+          <a
+            href={whatsappUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition flex items-center gap-2"
+            onClick={onSent}
+          >
+            <SendIcon size={14} /> Send via WhatsApp
+          </a>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function buildProfileUpdatedPayload(student, coachingName) {
+  const parentName = student.motherName || student.fatherName || "Parent";
+  const message = [
+    `Dear ${parentName},`,
+    ``,
+    `This is to inform you that *${student.fullName}*'s profile has been updated at *${coachingName}*.`,
+    ``,
+    `If you have any questions, please contact us.`,
+    ``,
+    `— ${coachingName}`,
+  ].join("\n");
+  return {
+    title: `Profile Updated • ${student.fullName}`,
+    studentId: student.id,
+    type: "Profile Update",
+    phone: student.parentWhatsapp,
+    message,
+  };
+}
+
+function buildNewEnrollmentPayload(student, coachingName) {
+  const parentName = student.motherName || student.fatherName || "Parent";
+  const message = [
+    `Dear ${parentName},`,
+    ``,
+    `Welcome! 🎉 *${student.fullName}* has been successfully enrolled at *${coachingName}*.`,
+    ``,
+    `📋 *Details:*`,
+    `• Student ID: ${student.studentId}`,
+    `• Class: ${student.classGrade}`,
+    student.subjects?.length ? `• Subjects: ${student.subjects.join(", ")}` : "",
+    ``,
+    `We look forward to a great learning journey together! 📚`,
+    ``,
+    `— ${coachingName}`,
+  ].filter(Boolean).join("\n");
+  return {
+    title: `New Enrollment • ${student.fullName}`,
+    studentId: student.id,
+    type: "New Enrollment",
+    phone: student.parentWhatsapp,
+    message,
+  };
+}
+
+function buildTestScorePayload(student, score, grade, coachingName) {
+  const parentName = student.motherName || student.fatherName || "Parent";
+  const percent = Math.round((Number(score.marksObtained) / Number(score.maxMarks || 1)) * 100);
+  const message = [
+    `Dear ${parentName},`,
+    ``,
+    `📝 *Test Score Update* for *${student.fullName}*:`,
+    ``,
+    `• Subject: ${score.subject}`,
+    `• Test: ${score.testName}`,
+    `• Marks: *${score.marksObtained}/${score.maxMarks}* (${percent}%)`,
+    `• Grade: *${grade}*`,
+    score.remarks ? `• Remarks: ${score.remarks}` : "",
+    ``,
+    `Keep encouraging your child! 🌟`,
+    ``,
+    `— ${coachingName}`,
+  ].filter(Boolean).join("\n");
+  return {
+    title: `Test Score • ${student.fullName}`,
+    studentId: student.id,
+    type: "Test Score",
+    phone: student.parentWhatsapp,
+    message,
+  };
+}
+
+function buildFeePaymentUpdatePayload(student, payment, status, coachingName) {
+  const parentName = student.motherName || student.fatherName || "Parent";
+  const monthLabel = months[Number((payment.monthKey || "").slice(5, 7)) - 1] || payment.monthKey;
+  const message = [
+    `Dear ${parentName},`,
+    ``,
+    `💰 *Fee Payment Update* for *${student.fullName}*:`,
+    ``,
+    `• Month: ${monthLabel}`,
+    `• Amount Paid: ${formatCurrency(payment.amountPaid)}`,
+    `• Amount Due: ${formatCurrency(payment.amountDue)}`,
+    `• Status: *${status}*`,
+    payment.mode ? `• Mode: ${payment.mode}` : "",
+    ``,
+    status === "Paid" ? `Thank you for the payment! ✅` : `Please clear the remaining balance at the earliest. 🙏`,
+    ``,
+    `— ${coachingName}`,
+  ].filter(Boolean).join("\n");
+  return {
+    title: `Fee Update • ${student.fullName}`,
+    studentId: student.id,
+    type: "Fee Update",
+    phone: student.parentWhatsapp,
+    message,
+  };
 }
 
 function buildFeeNotificationPayload(appState, student, record, reminderType) {
