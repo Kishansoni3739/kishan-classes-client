@@ -557,7 +557,26 @@ function App() {
       const data = await response.json();
       if (!cancelledObj.cancelled) {
         if (!initialDataLoadedRef.current) {
-          prevTestsRef.current = data.tests;
+          // On first load, seed prevTestsRef from localStorage to survive app restarts
+          if (authUser?.role === "student" && authUser?.studentId) {
+            const storageKey = `lastSeenTestIds_${authUser.studentId}`;
+            const stored = localStorage.getItem(storageKey);
+            if (stored) {
+              try {
+                const seenIds = JSON.parse(stored);
+                // Build a fake "previous tests" array with just IDs for comparison
+                prevTestsRef.current = seenIds.map((id) => ({ id }));
+              } catch {
+                prevTestsRef.current = data.tests;
+              }
+            } else {
+              // First time ever — treat all current tests as "seen" (no spam on first login)
+              prevTestsRef.current = data.tests;
+              localStorage.setItem(storageKey, JSON.stringify(data.tests.map((t) => t.id)));
+            }
+          } else {
+            prevTestsRef.current = data.tests;
+          }
           initialDataLoadedRef.current = true;
         }
         setAppState(data);
@@ -573,7 +592,7 @@ function App() {
         setIsRefreshing(false);
       }
     }
-  }, [authToken, fetchHeaders, addToast]);
+  }, [authToken, fetchHeaders, addToast, authUser]);
 
   useEffect(() => {
     const cancelledObj = { cancelled: false };
@@ -597,7 +616,7 @@ function App() {
     };
   }, [authToken, loadStateFromDatabase]);
 
-  // Trigger local notification when new scores are added for the logged-in student
+  // Trigger local notification ONLY for the latest new test score (not all new scores)
   useEffect(() => {
     if (!authUser || authUser.role !== "student") return;
 
@@ -606,18 +625,26 @@ function App() {
       const newTests = appState.tests.filter((t) => t.studentId === authUser.studentId && !prevIds.has(t.id));
       
       if (newTests.length > 0) {
-        const notifications = newTests.map((t, index) => ({
-          title: `New Test Score: ${t.subject}`,
-          body: `You scored ${t.marksObtained}/${t.maxMarks} in ${t.testName}`,
-          id: Math.floor(Math.random() * 1000000) + index,
-          schedule: { at: new Date(Date.now() + 1000 * (index + 1)) },
-        }));
+        // Sort by testDate descending, pick only the latest one
+        const sorted = [...newTests].sort((a, b) => new Date(b.testDate) - new Date(a.testDate));
+        const latest = sorted[0];
+        
+        const notification = {
+          title: `New Test Score: ${latest.subject}`,
+          body: `You scored ${latest.marksObtained}/${latest.maxMarks} in ${latest.testName}`,
+          id: Math.floor(Math.random() * 1000000),
+          schedule: { at: new Date(Date.now() + 1000) },
+        };
         
         LocalNotifications.requestPermissions().then((result) => {
           if (result.display === 'granted') {
-            LocalNotifications.schedule({ notifications });
+            LocalNotifications.schedule({ notifications: [notification] });
           }
         });
+
+        // Persist all current test IDs to localStorage so restarts don't re-notify
+        const storageKey = `lastSeenTestIds_${authUser.studentId}`;
+        localStorage.setItem(storageKey, JSON.stringify(appState.tests.map((t) => t.id)));
       }
     }
     prevTestsRef.current = appState.tests;
@@ -1921,6 +1948,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         {[
           ["fees", "Fee Payment History"],
           ["tests", "Test Scores History"],
+          ...(!isAdmin ? [["scheduled", "Scheduled Tests"]] : []),
           ...(isAdmin ? [["notifications", "Notification Log"]] : []),
         ].map(([value, label]) => (
           <button
@@ -2009,6 +2037,53 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
           ))}
         </div>
       )}
+
+      {tab === "scheduled" && !isAdmin && (() => {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const upcoming = (appState.scheduledTests || [])
+          .filter((t) => t.studentId === student.id && t.testDate >= todayStr)
+          .sort((a, b) => new Date(a.testDate) - new Date(b.testDate));
+        return (
+          <div className="space-y-3">
+            {upcoming.length > 0 ? (
+              upcoming.map((test) => (
+                <div key={test.id} className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/30">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-slate-900">{test.testName}</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {test.subject} • Max Marks: {test.maxMarks}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1.5 text-xs font-semibold text-blue-800">
+                        <Calendar size={12} />
+                        {formatDate(test.testDate)}
+                      </span>
+                      {(() => {
+                        const daysUntil = Math.ceil((new Date(test.testDate) - new Date(todayStr)) / (1000 * 60 * 60 * 24));
+                        return (
+                          <p className={`mt-1 text-xs font-medium ${
+                            daysUntil <= 1 ? "text-red-600" : daysUntil <= 3 ? "text-amber-600" : "text-slate-400"
+                          }`}>
+                            {daysUntil === 0 ? "Today" : daysUntil === 1 ? "Tomorrow" : `In ${daysUntil} days`}
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                <Calendar size={32} className="mx-auto text-slate-300 mb-3" />
+                <p className="text-sm text-slate-500">No upcoming scheduled tests.</p>
+                <p className="text-xs text-slate-400 mt-1">Tests will appear here when your teacher schedules them.</p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
