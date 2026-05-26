@@ -465,7 +465,8 @@ function App() {
   const prevTestsRef = useRef();
 
   const isAdmin = authUser?.role === "admin";
-  const currentNavItems = isAdmin ? navItems : studentNavItems;
+  const isTestUser = authUser?.role === "testuser";
+  const currentNavItems = isAdmin || isTestUser ? navItems : studentNavItems;
 
   const saveQueueRef = useRef(Promise.resolve());
 
@@ -502,6 +503,10 @@ function App() {
   }
 
   async function handleUpdateAdmin(username, password) {
+    if (authUser?.role === "testuser") {
+      addToast("Test User can't do this action.", "danger");
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/update-admin`, {
         method: "PUT",
@@ -662,15 +667,17 @@ function App() {
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
+          const errorData = await response.json().catch(() => ({}));
+          const errorText = errorData.error || await response.text();
           console.error("Server Error:", errorText);
           if (response.status === 401) handleLogout();
+          throw new Error(errorText);
         }
         setIsDatabaseReady(true);
       })
-      .catch(() => {
+      .catch((err) => {
         setIsDatabaseReady(false);
-        addToast("Could not save to server storage", "danger");
+        addToast(err.message || "Could not save to server storage", "danger");
       });
   }, [addToast]);
 
@@ -679,6 +686,10 @@ function App() {
 
   // Fix: Synchronous state resolution to prevent data loss on save
   function updateState(recipe) {
+    if (authUser?.role === "testuser") {
+      addToast("Test User can't do this action.", "danger");
+      return;
+    }
     const nextState = recipe(structuredClone(latestStateRef.current));
     setAppState(nextState);
     latestStateRef.current = nextState;
@@ -739,6 +750,10 @@ function App() {
 
   // Fix #11: Delete confirmation dialog
   async function deleteStudent(studentId) {
+    if (authUser?.role === "testuser") {
+      addToast("Test User can't do this action.", "danger");
+      return;
+    }
     const student = appState.students.find((s) => s.id === studentId);
     if (!window.confirm(`Are you sure you want to delete "${student?.fullName || 'this student'}"? This will remove all their fee records, test scores, and notifications. This action cannot be undone.`)) return;
     
@@ -746,7 +761,8 @@ function App() {
       const res = await fetch(`${API_BASE_URL}/api/students/${studentId}`, { method: 'DELETE', headers: fetchHeaders });
       if (!res.ok) {
         if (res.status === 401) handleLogout();
-        throw new Error("Server error");
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Server error");
       }
       setAppState((current) => {
         const draft = structuredClone(current);
@@ -766,6 +782,10 @@ function App() {
 
   // Fix #11: Delete confirmation dialog
   function deleteBatch(batchId) {
+    if (authUser?.role === "testuser") {
+      addToast("Test User can't do this action.", "danger");
+      return;
+    }
     const batch = appState.batches.find((b) => b.id === batchId);
     const enrolledCount = appState.students.filter((s) => s.batchId === batchId).length;
     if (!window.confirm(`Are you sure you want to delete batch "${batch?.name || 'this batch'}"?${enrolledCount > 0 ? ` ${enrolledCount} student(s) will be unassigned.` : ''} This action cannot be undone.`)) return;
@@ -781,12 +801,17 @@ function App() {
   }
 
   async function deleteNotificationLog(logId) {
+    if (authUser?.role === "testuser") {
+      addToast("Test User can't do this action.", "danger");
+      return;
+    }
     if (!window.confirm("Are you sure you want to delete this notification log? This action cannot be undone.")) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/notification-logs/${logId}`, { method: 'DELETE', headers: fetchHeaders });
       if (!res.ok) {
         if (res.status === 401) handleLogout();
-        throw new Error("Server error");
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Server error");
       }
       setAppState((current) => {
         const draft = structuredClone(current);
