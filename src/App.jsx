@@ -53,6 +53,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { isNative } from "./utils/platform";
 
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -210,7 +211,7 @@ function buildOverdueFeesPdfDoc(appState, overdueRows, titleSuffix = "Overdue Fe
 // Cross-platform PDF save: uses Capacitor Filesystem + Share on Android,
 // falls back to jsPDF's built-in doc.save() on desktop browsers.
 async function savePdfDocument(doc, filename) {
-  if (Capacitor.isNativePlatform()) {
+  if (isNative()) {
     try {
       const base64Data = doc.output("datauristring").split(",")[1];
       const written = await Filesystem.writeFile({
@@ -691,7 +692,7 @@ function App() {
         setIsDatabaseReady(false);
         addToast(err.message || "Could not save to server storage", "danger");
       });
-  }, [addToast]);
+  }, [addToast, fetchHeaders]);
 
   const latestStateRef = useRef(appState);
   latestStateRef.current = appState;
@@ -970,7 +971,7 @@ function App() {
       .join("");
 
     const html = `<!doctype html><html><head><title>Fees Report</title><style>body{font-family:Arial;padding:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#eff6ff}</style></head><body><h2>Fees Report</h2><table><thead><tr><th>Student</th>${months.map((m) => `<th>${m}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></body></html>`;
-    if (Capacitor.isNativePlatform()) {
+    if (isNative()) {
       try {
         const written = await Filesystem.writeFile({
           path: "fees-report.html",
@@ -3755,7 +3756,7 @@ function LoginPage({ onLogin, error, isLoading }) {
         
         <div className="mt-8 pt-6 border-t border-white/10 text-center text-xs text-white/50 space-y-4">
           <p>Student default: ID / Date of Birth (DDMMYYYY)</p>
-          {!Capacitor.isNativePlatform() && (
+          {!isNative() && (
             <div className="pt-2 flex justify-center">
               <a 
                 href="/app-release.apk" 
