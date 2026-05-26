@@ -337,7 +337,19 @@ function generateStudentProgressPdf(student, appState) {
   return { doc, filename };
 }
 
+function canPerformAction() {
+  try {
+    const user = JSON.parse(localStorage.getItem("user"));
+    if (user && user.role === "testuser") {
+      alert("Test User can't do this action.");
+      return false;
+    }
+  } catch (e) {}
+  return true;
+}
+
 function openWhatsApp(student, message) {
+  if (!canPerformAction()) return false;
   const rawNumber = (student.parentWhatsapp || "").replace(/\D/g, "");
   if (!rawNumber) {
     alert(`Parent WhatsApp number is not set for ${student.fullName}. Please edit the student profile and add a WhatsApp number first.`);
@@ -2940,7 +2952,13 @@ function TransientNotificationModal({ payload, onClose, onSent }) {
             target="_blank"
             rel="noreferrer"
             className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition flex items-center gap-2"
-            onClick={onSent}
+            onClick={(e) => {
+              if (!canPerformAction()) {
+                e.preventDefault();
+                return;
+              }
+              onSent();
+            }}
           >
             <SendIcon size={14} /> Send via WhatsApp
           </a>
@@ -3243,7 +3261,13 @@ function NotificationModal({ payload, onClose, onSent }) {
             target="_blank"
             rel="noreferrer"
             className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white"
-            onClick={() => onSent(payload.studentId, payload.type, payload.message)}
+            onClick={(e) => {
+              if (!canPerformAction()) {
+                e.preventDefault();
+                return;
+              }
+              onSent(payload.studentId, payload.type, payload.message);
+            }}
           >
             Send via WhatsApp
           </a>
