@@ -3753,8 +3753,20 @@ function LoginPage({ onLogin, error, isLoading }) {
           </button>
         </form>
         
-        <div className="mt-8 pt-6 border-t border-white/10 text-center text-xs text-white/50 space-y-1">
+        <div className="mt-8 pt-6 border-t border-white/10 text-center text-xs text-white/50 space-y-4">
           <p>Student default: ID / Date of Birth (DDMMYYYY)</p>
+          {!Capacitor.isNativePlatform() && (
+            <div className="pt-2 flex justify-center">
+              <a 
+                href="/app-release.apk" 
+                download
+                className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 text-blue-200 rounded-xl transition border border-white/10"
+              >
+                <Download size={16} />
+                Download Android App
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </div>
