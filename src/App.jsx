@@ -54,6 +54,8 @@ import {
   YAxis,
 } from "recharts";
 import { isNative } from "./utils/platform";
+import { StudentProgressPDF } from "./reports/StudentProgressPDF";
+import { generatePDF } from "./utils/generatePDF";
 
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -449,6 +451,7 @@ function App() {
   const [appState, setAppState] = useState(seedData);
   const [activePage, setActivePage] = useState("dashboard");
   const [selectedStudentId, setSelectedStudentId] = useState(null);
+  const [parentActiveStudentId, setParentActiveStudentId] = useState("");
   const [selectedBatchId, setSelectedBatchId] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [studentFormOpen, setStudentFormOpen] = useState(false);
@@ -464,6 +467,7 @@ function App() {
   const [editingBatch, setEditingBatch] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [studentSearch, setStudentSearch] = useState("");
+  const [studentToPrint, setStudentToPrint] = useState(null);
   const [feeFilters, setFeeFilters] = useState({ batchId: "all", classGrade: "all", monthKey: "all", status: "all" });
   const [learningFilter, setLearningFilter] = useState({ studentId: "", batchId: "all", subject: "all" });
   const [isDatabaseReady, setIsDatabaseReady] = useState(false);
@@ -1021,9 +1025,21 @@ function App() {
   }
 
   async function exportStudentProgressPdf(student) {
-    const { doc, filename } = generateStudentProgressPdf(student, appState);
-    await savePdfDocument(doc, filename);
-    addToast("Student progress PDF downloaded");
+    try {
+      setStudentToPrint(student);
+      addToast("Generating PDF...", "info");
+      const filename = `${student.fullName.replace(/\s+/g, "-").toLowerCase()}-progress-report.pdf`;
+      
+      setTimeout(async () => {
+        await generatePDF(`pdf-report-template-${student.id}`, filename);
+        setStudentToPrint(null);
+        addToast("Student progress PDF downloaded", "success");
+      }, 1500); // 1.5s delay allows React to render and Recharts to animate
+    } catch (e) {
+      console.error(e);
+      addToast("Failed to generate PDF", "danger");
+      setStudentToPrint(null);
+    }
   }
 
   function sendStudentFeesPdfToParent(student) {
@@ -1376,18 +1392,39 @@ function App() {
 
             {activePage === "settings" && <SettingsPage settings={appState.settings} onSave={saveSettings} onUpdateAdmin={handleUpdateAdmin} />}
 
-            {activePage === "my-portal" && appState.students[0] && (
-              <StudentProfile
-                student={appState.students[0]}
-                appState={appState}
-                isAdmin={isAdmin}
-                onExportProgress={exportStudentProgressPdf}
-                onSendFeesPdf={sendStudentFeesPdfToParent}
-                onSendProgressPdf={sendStudentProgressPdfToParent}
-                onDeleteNotification={deleteNotificationLog}
-                onEditScore={(test) => setScoreModalOpen(test)}
-                onDeleteScore={deleteTestScore}
-              />
+            {activePage === "my-portal" && appState.students.length > 0 && (
+              <div>
+                {appState.students.length > 1 && (
+                  <div className="mb-6 flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-700">Multiple Students Found</h4>
+                      <p className="text-xs text-slate-500">Switch between your children's profiles</p>
+                    </div>
+                    <select
+                      className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a]"
+                      value={parentActiveStudentId || appState.students[0].id}
+                      onChange={(e) => setParentActiveStudentId(e.target.value)}
+                    >
+                      {appState.students.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.fullName} ({s.classGrade})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <StudentProfile
+                  student={appState.students.find((s) => s.id === parentActiveStudentId) || appState.students[0]}
+                  appState={appState}
+                  isAdmin={isAdmin}
+                  onExportProgress={exportStudentProgressPdf}
+                  onSendFeesPdf={sendStudentFeesPdfToParent}
+                  onSendProgressPdf={sendStudentProgressPdfToParent}
+                  onDeleteNotification={deleteNotificationLog}
+                  onEditScore={(test) => setScoreModalOpen(test)}
+                  onDeleteScore={deleteTestScore}
+                />
+              </div>
             )}
           </div>
         </main>
@@ -1475,6 +1512,17 @@ function App() {
             setTransientNotification(null);
           }}
         />
+      )}
+      
+      {/* Hidden PDF Template Renderer */}
+      {studentToPrint && (
+        <div style={{ position: 'absolute', top: 0, left: '-9999px', zIndex: -1 }}>
+          <StudentProgressPDF 
+            student={studentToPrint} 
+            summary={buildStudentProgressSummary(studentToPrint, appState)} 
+            appState={appState} 
+          />
+        </div>
       )}
     </div>
   );
