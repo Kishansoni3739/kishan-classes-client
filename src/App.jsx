@@ -82,9 +82,9 @@ const uid = () =>
   typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-      });
+      const r = (Math.random() * 16) | 0;
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
 const nowIso = () => new Date().toISOString();
 const formatCurrency = (value) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
@@ -252,10 +252,15 @@ function generateStudentFeesDuePdf(student, appState) {
   return { doc, filename, overdueRows };
 }
 
-function buildStudentProgressSummary(student, appState) {
-  const tests = appState.tests
+function buildStudentProgressSummary(student, appState, reportMonth = null) {
+  let tests = appState.tests
     .filter((test) => test.studentId === student.id)
     .sort((a, b) => new Date(a.testDate) - new Date(b.testDate));
+
+  if (reportMonth) {
+    tests = tests.filter((test) => test.testDate.startsWith(reportMonth));
+  }
+
   const testedSubjects = [...new Set(tests.map((test) => test.subject))];
   const subjectStats = testedSubjects.map((subject) => {
     const subjectTests = tests.filter((test) => test.subject === subject);
@@ -323,13 +328,13 @@ function generateStudentProgressPdf(student, appState) {
     head: [["Subject-wise Growth", "Tests", "Average", "First", "Latest", "Growth"]],
     body: summary.subjectStats.length
       ? summary.subjectStats.map((item) => [
-          item.subject,
-          String(item.tests),
-          `${item.averagePercent}%`,
-          `${item.firstPercent}%`,
-          `${item.latestPercent}%`,
-          `${item.growth >= 0 ? "+" : ""}${item.growth}%`,
-        ])
+        item.subject,
+        String(item.tests),
+        `${item.averagePercent}%`,
+        `${item.firstPercent}%`,
+        `${item.latestPercent}%`,
+        `${item.growth >= 0 ? "+" : ""}${item.growth}%`,
+      ])
       : [["No tested subjects found", "", "", "", "", ""]],
     styles: { fontSize: 10, cellPadding: 6 },
     headStyles: { fillColor: [37, 99, 235] },
@@ -347,7 +352,7 @@ function canPerformAction() {
       alert("Test User can't do this action.");
       return false;
     }
-  } catch (e) {}
+  } catch (e) { }
   return true;
 }
 
@@ -449,7 +454,15 @@ function seedData() {
 
 function App() {
   const [appState, setAppState] = useState(seedData);
-  const [activePage, setActivePage] = useState("dashboard");
+  const [activePage, setActivePage] = useState(() => {
+    try {
+      const user = JSON.parse(localStorage.getItem("user"));
+      if (user && user.role !== "admin" && user.role !== "testuser") {
+        return "my-portal";
+      }
+    } catch {}
+    return "dashboard";
+  });
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [parentActiveStudentId, setParentActiveStudentId] = useState("");
   const [selectedBatchId, setSelectedBatchId] = useState(null);
@@ -488,6 +501,13 @@ function App() {
 
   const saveQueueRef = useRef(Promise.resolve());
 
+  // Enforce access control on route change or login
+  useEffect(() => {
+    if (authUser && !isAdmin && !isTestUser && activePage !== "my-portal") {
+      setActivePage("my-portal");
+    }
+  }, [authUser, isAdmin, isTestUser, activePage]);
+
   async function handleLogin(username, password) {
     setIsLoggingIn(true);
     setLoginError("");
@@ -499,7 +519,7 @@ function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Login failed");
-      
+
       setAuthToken(data.token);
       setAuthUser(data.user);
       localStorage.setItem("token", data.token);
@@ -646,19 +666,19 @@ function App() {
     if (prevTestsRef.current && appState.tests) {
       const prevIds = new Set(prevTestsRef.current.map((t) => t.id));
       const newTests = appState.tests.filter((t) => t.studentId === authUser.studentId && !prevIds.has(t.id));
-      
+
       if (newTests.length > 0) {
         // Sort by testDate descending, pick only the latest one
         const sorted = [...newTests].sort((a, b) => new Date(b.testDate) - new Date(a.testDate));
         const latest = sorted[0];
-        
+
         const notification = {
           title: `New Test Score: ${latest.subject}`,
           body: `You scored ${latest.marksObtained}/${latest.maxMarks} in ${latest.testName}`,
           id: Math.floor(Math.random() * 1000000),
           schedule: { at: new Date(Date.now() + 1000) },
         };
-        
+
         LocalNotifications.requestPermissions().then((result) => {
           if (result.display === 'granted') {
             LocalNotifications.schedule({ notifications: [notification] });
@@ -774,7 +794,7 @@ function App() {
     }
     const student = appState.students.find((s) => s.id === studentId);
     if (!window.confirm(`Are you sure you want to delete "${student?.fullName || 'this student'}"? This will remove all their fee records, test scores, and notifications. This action cannot be undone.`)) return;
-    
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/students/${studentId}`, { method: 'DELETE', headers: fetchHeaders });
       if (!res.ok) {
@@ -885,7 +905,7 @@ function App() {
       const isAbsent = score.remarks === "Absent on Test Day";
       const percent = (Number(score.marksObtained) / Number(score.maxMarks || 1)) * 100;
       computedGrade = isAbsent ? "-" : getGrade(percent, draft.settings.gradeBoundaries);
-      
+
       const newScoreData = {
         ...score,
         batchId: draft.students.find((student) => student.id === score.studentId)?.batchId || "",
@@ -1024,16 +1044,35 @@ function App() {
     addToast("Overdue fees PDF downloaded");
   }
 
-  async function exportStudentProgressPdf(student) {
+  async function exportStudentProgressPdf(student, type = "monthly") {
     try {
-      setStudentToPrint(student);
-      addToast("Generating PDF...", "info");
-      const filename = `${student.fullName.replace(/\s+/g, "-").toLowerCase()}-progress-report.pdf`;
-      
+      let reportMonth = null;
+      if (type === "monthly") {
+        const studentTests = appState.tests
+          .filter((t) => t.studentId === student.id)
+          .sort((a, b) => new Date(b.testDate) - new Date(a.testDate));
+        if (studentTests.length > 0) {
+          reportMonth = studentTests[0].testDate.substring(0, 7);
+        } else {
+          reportMonth = new Date().toISOString().substring(0, 7);
+        }
+      }
+
+      setStudentToPrint({ student, type, reportMonth });
+      addToast(`Generating ${type} PDF...`, "info");
+      const filename = `${student.fullName.replace(/\s+/g, "-").toLowerCase()}-${type}-progress-report.pdf`;
+
       setTimeout(async () => {
-        await generatePDF(`pdf-report-template-${student.id}`, filename);
-        setStudentToPrint(null);
-        addToast("Student progress PDF downloaded", "success");
+        try {
+          const doc = await generatePDF(`pdf-report-template-${student.id}`);
+          await savePdfDocument(doc, filename);
+          setStudentToPrint(null);
+          addToast("Student progress PDF downloaded", "success");
+        } catch (err) {
+          console.error("PDF Generation Error:", err);
+          setStudentToPrint(null);
+          addToast("Failed to generate PDF. Check console for details.", "danger");
+        }
       }, 1500); // 1.5s delay allows React to render and Recharts to animate
     } catch (e) {
       console.error(e);
@@ -1142,9 +1181,8 @@ function App() {
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
         <aside
-          className={`sticky top-0 hidden min-h-screen flex-col border-r border-slate-200 bg-[#1e3a8a] px-3 py-5 text-white shadow-2xl md:flex ${
-            sidebarCollapsed ? "w-22" : "w-72"
-          } transition-all duration-300`}
+          className={`sticky top-0 hidden min-h-screen flex-col border-r border-slate-200 bg-[#1e3a8a] px-3 py-5 text-white shadow-2xl md:flex ${sidebarCollapsed ? "w-22" : "w-72"
+            } transition-all duration-300`}
         >
           <div className="mb-8 flex items-center justify-between gap-3 px-2">
             {!sidebarCollapsed && (
@@ -1168,9 +1206,8 @@ function App() {
               return (
                 <button
                   key={item.id}
-                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition ${
-                    active ? "bg-white text-[#1e3a8a] shadow-lg" : "text-blue-100 hover:bg-white/10"
-                  }`}
+                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition ${active ? "bg-white text-[#1e3a8a] shadow-lg" : "text-blue-100 hover:bg-white/10"
+                    }`}
                   onClick={() => {
                     setSelectedStudentId(null);
                     setSelectedBatchId(null);
@@ -1191,7 +1228,7 @@ function App() {
               {isAdmin && <p className="mt-3">Active batches: {appState.batches.length}</p>}
             </div>
           )}
-          
+
           <button
             onClick={handleLogout}
             className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-red-200 transition hover:bg-white/10 ${sidebarCollapsed ? 'justify-center px-0' : ''}`}
@@ -1224,9 +1261,8 @@ function App() {
                 return (
                   <button
                     key={item.id}
-                    className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-medium ${
-                      active ? "bg-white text-[#1e3a8a]" : "bg-white/10 text-white"
-                    }`}
+                    className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-medium ${active ? "bg-white text-[#1e3a8a]" : "bg-white/10 text-white"
+                      }`}
                     onClick={() => {
                       setSelectedStudentId(null);
                       setSelectedBatchId(null);
@@ -1253,9 +1289,8 @@ function App() {
                   <RefreshCw size={18} className={isRefreshing ? "animate-spin" : ""} />
                 </button>
                 <div
-                  className={`rounded-2xl px-4 py-2 text-sm font-medium ${
-                    isDatabaseReady ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                  }`}
+                  className={`rounded-2xl px-4 py-2 text-sm font-medium ${isDatabaseReady ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                    }`}
                 >
                   {isDatabaseReady ? "Server storage connected" : "Waiting for server sync"}
                 </div>
@@ -1513,14 +1548,16 @@ function App() {
           }}
         />
       )}
-      
+
       {/* Hidden PDF Template Renderer */}
       {studentToPrint && (
-        <div style={{ position: 'absolute', top: 0, left: '-9999px', zIndex: -1 }}>
-          <StudentProgressPDF 
-            student={studentToPrint} 
-            summary={buildStudentProgressSummary(studentToPrint, appState)} 
-            appState={appState} 
+        <div style={{ position: 'fixed', top: '200vh', left: 0, zIndex: -9999 }}>
+          <StudentProgressPDF
+            student={studentToPrint.student}
+            summary={buildStudentProgressSummary(studentToPrint.student, appState, studentToPrint.reportMonth)}
+            appState={appState}
+            reportType={studentToPrint.type}
+            reportMonth={studentToPrint.reportMonth}
           />
         </div>
       )}
@@ -1696,7 +1733,7 @@ function buildFeeGrid(appState, filters) {
   const totals = appState.feeRecords.reduce(
     (acc, record) => {
       acc.collected += Number(record.amountPaid || 0);
-      
+
       // Calculate due and pending ONLY up to the current month to avoid including future bills
       if (record.monthKey <= currentMonthKey) {
         acc.due += Number(record.amountDue || 0);
@@ -1753,10 +1790,10 @@ function buildLearningView(appState, filter) {
   const improvement =
     studentScores.length >= 2
       ? Math.round(
-          ((studentScores.at(-1).marksObtained / studentScores.at(-1).maxMarks -
-            studentScores.at(-2).marksObtained / studentScores.at(-2).maxMarks) *
-            100),
-        )
+        ((studentScores.at(-1).marksObtained / studentScores.at(-1).maxMarks -
+          studentScores.at(-2).marksObtained / studentScores.at(-2).maxMarks) *
+          100),
+      )
       : 0;
 
   const batchAnalytics = appState.batches.map((batch) => {
@@ -2082,24 +2119,30 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
           </button>
         ))}
         <button
-          onClick={() => onExportProgress(student)}
+          onClick={() => onExportProgress(student, "monthly")}
           className="rounded-full bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white"
         >
-          Download Progress PDF
+          Download Monthly Report
         </button>
         {isAdmin && (
           <>
             <button
+              onClick={() => onExportProgress(student, "overall")}
+              className="rounded-full border border-[#1e3a8a] text-[#1e3a8a] px-4 py-2 text-sm font-medium hover:bg-slate-50"
+            >
+              Download Overall Report
+            </button>
+            <button
               onClick={() => onSendFeesPdf(student)}
               className="rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white"
             >
-              Send Fees PDF
+              Send Fees Info
             </button>
             <button
               onClick={() => onSendProgressPdf(student)}
               className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white"
             >
-              Send Progress PDF
+              Send Progress Info
             </button>
           </>
         )}
@@ -2207,9 +2250,8 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
                       {(() => {
                         const daysUntil = Math.ceil((new Date(test.testDate) - new Date(todayStr)) / (1000 * 60 * 60 * 24));
                         return (
-                          <p className={`mt-1 text-xs font-medium ${
-                            daysUntil <= 1 ? "text-red-600" : daysUntil <= 3 ? "text-amber-600" : "text-slate-400"
-                          }`}>
+                          <p className={`mt-1 text-xs font-medium ${daysUntil <= 1 ? "text-red-600" : daysUntil <= 3 ? "text-amber-600" : "text-slate-400"
+                            }`}>
                             {daysUntil === 0 ? "Today" : daysUntil === 1 ? "Tomorrow" : `In ${daysUntil} days`}
                           </p>
                         );
@@ -2453,7 +2495,7 @@ function FeesPage({ appState, feeGrid, feeFilters, setFeeFilters, onCellClick, o
 
 function LearningPage({ appState, learningView, filter, setFilter, onAddScore, onSaveScore, onScheduleTest, onSendScore, onDeleteGroup, isAdmin, onEditScore, onDeleteScore }) {
   const [selectedTopSubject, setSelectedTopSubject] = useState("");
-  
+
   useEffect(() => {
     const subjects = Object.keys(learningView.subjectRankings);
     if ((!selectedTopSubject || !subjects.includes(selectedTopSubject)) && subjects.length > 0) {
@@ -2622,10 +2664,10 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                 const isExpanded = expandedGroup === group.key;
                 const batchName = appState.batches.find((b) => b.id === group.batchId)?.name || "Unknown Batch";
                 const isPassed = group.testDate < todayStr;
-                
+
                 return (
                   <div key={group.key} className="rounded-2xl border border-slate-200 overflow-hidden">
-                    <div 
+                    <div
                       className="bg-slate-50 p-4 cursor-pointer hover:bg-slate-100 transition flex items-center justify-between"
                       onClick={() => setExpandedGroup(isExpanded ? null : group.key)}
                     >
@@ -2641,8 +2683,8 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                           className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${isPassed ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-red-100 text-red-800 hover:bg-red-200"}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            if(window.confirm("Are you sure you want to delete this scheduled test for all students?")) {
-                                onDeleteGroup(group);
+                            if (window.confirm("Are you sure you want to delete this scheduled test for all students?")) {
+                              onDeleteGroup(group);
                             }
                           }}
                         >
@@ -2968,8 +3010,8 @@ function SettingsPage({ settings, onSave, onUpdateAdmin }) {
           Updating the admin credentials will log you out immediately. You will need to log back in with your new credentials.
         </div>
         <div>
-          <button 
-            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50" 
+          <button
+            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             disabled={!adminUsername.trim() || !adminPassword.trim()}
             onClick={() => {
               if (window.confirm("Are you sure you want to change the admin credentials? You will be logged out.")) {
@@ -3071,7 +3113,7 @@ function ScheduleTestModal({ appState, onClose, onSave }) {
         <button className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium" onClick={onClose}>
           Cancel
         </button>
-        <button 
+        <button
           className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           onClick={handleSave}
           disabled={!form.testName || selectedStudents.length === 0}
@@ -3187,7 +3229,7 @@ function StudentFormModal({ appState, initialValue, onClose, onSave }) {
           label="Class / Grade"
           value={form.classGrade}
           onChange={(value) => setForm((prev) => ({ ...prev, classGrade: value }))}
-          options={["None","Class 1","Class 2","Class 3","Class 4","Class 5","Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "Class 11", "Class 12"]}
+          options={["None", "Class 1", "Class 2", "Class 3", "Class 4", "Class 5", "Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "Class 11", "Class 12"]}
         />
         <SelectField
           label="Batch"
@@ -3861,9 +3903,8 @@ function ToastStack({ toasts }) {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`pointer-events-auto min-w-[260px] rounded-2xl px-4 py-3 text-white shadow-lg ${
-            toast.tone === "danger" ? "bg-red-500" : "bg-[#1e3a8a]"
-          }`}
+          className={`pointer-events-auto min-w-[260px] rounded-2xl px-4 py-3 text-white shadow-lg ${toast.tone === "danger" ? "bg-red-500" : "bg-[#1e3a8a]"
+            }`}
         >
           {toast.title}
         </div>
@@ -3888,14 +3929,14 @@ function SendIcon(props) {
 function LoginPage({ onLogin, error, isLoading }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-900 overflow-hidden relative">
       {/* Animated gradient background */}
       <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-slate-900 to-indigo-900 opacity-80" />
       <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-blue-600/20 blur-[120px] animate-pulse" />
       <div className="absolute top-[60%] -right-[10%] w-[40%] h-[40%] rounded-full bg-indigo-500/20 blur-[100px] animate-pulse delay-1000" />
-      
+
       <div className="relative z-10 w-full max-w-md p-8 md:p-12 mx-4 rounded-3xl bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl">
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm border border-white/30">
@@ -3904,19 +3945,19 @@ function LoginPage({ onLogin, error, isLoading }) {
           <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Welcome Back</h1>
           <p className="text-blue-200 text-sm">Sign in to your coaching center portal</p>
         </div>
-        
+
         {error && (
           <div className="mb-6 bg-red-500/20 border border-red-500/50 text-red-100 px-4 py-3 rounded-2xl text-sm backdrop-blur-sm text-center">
             {error}
           </div>
         )}
-        
+
         <form onSubmit={(e) => { e.preventDefault(); onLogin(username, password); }} className="space-y-5">
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-2">Username or Student ID</label>
-            <input 
-              type="text" 
-              value={username} 
+            <input
+              type="text"
+              value={username}
               onChange={e => setUsername(e.target.value)}
               className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 px-5 py-3 rounded-2xl outline-none focus:bg-white/20 focus:border-white/40 transition"
               placeholder="e.g. admin or CC-2026-001"
@@ -3925,31 +3966,31 @@ function LoginPage({ onLogin, error, isLoading }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-blue-100 mb-2">Password</label>
-            <input 
-              type="password" 
-              value={password} 
+            <input
+              type="password"
+              value={password}
               onChange={e => setPassword(e.target.value)}
               className="w-full bg-white/10 border border-white/20 text-white placeholder-white/40 px-5 py-3 rounded-2xl outline-none focus:bg-white/20 focus:border-white/40 transition"
               placeholder="••••••••"
               required
             />
           </div>
-          
-          <button 
-            type="submit" 
+
+          <button
+            type="submit"
             disabled={isLoading || !username || !password}
             className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 text-white font-semibold py-4 rounded-2xl shadow-lg transition duration-200 mt-4 flex justify-center items-center gap-2"
           >
             {isLoading ? <RefreshCw className="animate-spin" size={20} /> : "Sign In"}
           </button>
         </form>
-        
+
         <div className="mt-8 pt-6 border-t border-white/10 text-center text-xs text-white/50 space-y-4">
           <p>Student default: ID / Date of Birth (DDMMYYYY)</p>
           {!isNative() && (
             <div className="pt-2 flex justify-center">
-              <a 
-                href="/app-release.apk" 
+              <a
+                href="/app-release.apk"
                 download
                 className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 text-blue-200 rounded-xl transition border border-white/10"
               >
