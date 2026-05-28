@@ -458,6 +458,7 @@ function App() {
   const [scheduleTestModalOpen, setScheduleTestModalOpen] = useState(false);
   const [notificationModal, setNotificationModal] = useState(null);
   const [bulkNotificationType, setBulkNotificationType] = useState(null);
+  const [broadcastConfig, setBroadcastConfig] = useState(null);
   const [transientNotification, setTransientNotification] = useState(null);
   const [editingStudent, setEditingStudent] = useState(null);
   const [editingBatch, setEditingBatch] = useState(null);
@@ -880,28 +881,52 @@ function App() {
       const isAbsent = score.remarks === "Absent on Test Day";
       const percent = (Number(score.marksObtained) / Number(score.maxMarks || 1)) * 100;
       computedGrade = isAbsent ? "-" : getGrade(percent, draft.settings.gradeBoundaries);
-      draft.tests.unshift({
-        id: uid(),
+      
+      const newScoreData = {
         ...score,
         batchId: draft.students.find((student) => student.id === score.studentId)?.batchId || "",
         grade: computedGrade,
         performanceTag: isAbsent ? "Absent" : getPerformanceTag(percent),
-      });
-      // Delete the scheduled test if this score completes it
-      if (score.scheduledTestId) {
-        draft.scheduledTests = draft.scheduledTests.filter(t => t.id !== score.scheduledTestId);
+      };
+
+      if (score.id && !score.scheduledTestId) {
+        // Edit existing score
+        const index = draft.tests.findIndex(t => t.id === score.id);
+        if (index >= 0) {
+          draft.tests[index] = newScoreData;
+        }
+      } else {
+        draft.tests.unshift({ id: uid(), ...newScoreData });
+        if (score.scheduledTestId) {
+          draft.scheduledTests = draft.scheduledTests.filter(t => t.id !== score.scheduledTestId);
+        }
       }
       return draft;
     });
     setScoreModalOpen(false);
     addToast("Test score saved");
 
-    // Trigger transient (non-persisted) WhatsApp notification to parent
-    const student = latestStateRef.current.students.find((s) => s.id === score.studentId);
-    if (student && student.parentWhatsapp) {
-      const coachingName = latestStateRef.current.settings.coachingName;
-      setTransientNotification(buildTestScorePayload(student, score, computedGrade, coachingName));
+    // Only send notification if it's a new score
+    if (!score.id || score.scheduledTestId) {
+      const student = latestStateRef.current.students.find((s) => s.id === score.studentId);
+      if (student && student.parentWhatsapp) {
+        const coachingName = latestStateRef.current.settings.coachingName;
+        setTransientNotification(buildTestScorePayload(student, score, computedGrade, coachingName));
+      }
     }
+  }
+
+  function deleteTestScore(testId) {
+    if (authUser?.role === "testuser") {
+      addToast("Test User can't do this action.", "danger");
+      return;
+    }
+    if (!window.confirm("Are you sure you want to delete this test score?")) return;
+    updateState((draft) => {
+      draft.tests = draft.tests.filter((test) => test.id !== testId);
+      return draft;
+    });
+    addToast("Test score deleted");
   }
 
   function handleDeleteScheduledTestGroup(groupInfo) {
@@ -1279,6 +1304,8 @@ function App() {
                 onDelete={deleteStudent}
                 onOpen={(studentId) => setSelectedStudentId(studentId)}
                 onDeleteNotification={deleteNotificationLog}
+                onEditScore={(test) => setScoreModalOpen(test)}
+                onDeleteScore={deleteTestScore}
               />
             )}
 
@@ -1334,7 +1361,10 @@ function App() {
                 appState={appState}
                 candidates={notificationCandidates}
                 onOpenNotification={setNotificationModal}
-                onBulk={(type) => setBulkNotificationType(type)}
+                onBulk={(type, payload) => {
+                  setBulkNotificationType(type);
+                  if (type === "broadcast") setBroadcastConfig(payload);
+                }}
                 onTemplateSave={(templates) => {
                   saveSettings({ ...appState.settings, templates });
                 }}
@@ -1352,6 +1382,8 @@ function App() {
                 onSendFeesPdf={sendStudentFeesPdfToParent}
                 onSendProgressPdf={sendStudentProgressPdfToParent}
                 onDeleteNotification={deleteNotificationLog}
+                onEditScore={(test) => setScoreModalOpen(test)}
+                onDeleteScore={deleteTestScore}
               />
             )}
           </div>
@@ -1417,6 +1449,7 @@ function App() {
           appState={appState}
           type={bulkNotificationType}
           candidates={notificationCandidates}
+          broadcastConfig={broadcastConfig}
           onClose={() => setBulkNotificationType(null)}
           onOpenNotification={setNotificationModal}
         />
@@ -1884,7 +1917,7 @@ function DashboardPage({ appState, data, onNavigate, onOpenStudent }) {
   );
 }
 
-function StudentsPage({ appState, students, selectedStudent, search, setSearch, onAdd, onEdit, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDelete, onOpen, onDeleteNotification }) {
+function StudentsPage({ appState, students, selectedStudent, search, setSearch, onAdd, onEdit, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDelete, onOpen, onDeleteNotification, onEditScore, onDeleteScore }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
       <Panel
@@ -1932,13 +1965,13 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
       </Panel>
 
       <Panel title="Student Profile" icon={FileText}>
-        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} isAdmin={true} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} /> : <EmptyState label="Select a student to open the full profile." />}
+        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} isAdmin={true} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} onEditScore={onEditScore} onDeleteScore={onDeleteScore} /> : <EmptyState label="Select a student to open the full profile." />}
       </Panel>
     </div>
   );
 }
 
-function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification }) {
+function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification, onEditScore, onDeleteScore }) {
   const batch = appState.batches.find((item) => item.id === student.batchId);
   const feeHistory = appState.feeRecords
     .filter((record) => record.studentId === student.id)
@@ -2346,6 +2379,15 @@ function FeesPage({ appState, feeGrid, feeFilters, setFeeFilters, onCellClick, o
 }
 
 function LearningPage({ appState, learningView, filter, setFilter, onAddScore, onSaveScore, onScheduleTest, onSendScore, onDeleteGroup }) {
+  const [selectedTopSubject, setSelectedTopSubject] = useState("");
+  
+  useEffect(() => {
+    const subjects = Object.keys(learningView.subjectRankings);
+    if (!selectedTopSubject && subjects.length > 0) {
+      setSelectedTopSubject(subjects[0]);
+    }
+  }, [learningView.subjectRankings, selectedTopSubject]);
+
   const groupedTestsMap = {};
   (appState.scheduledTests || []).forEach((test) => {
     const key = `${test.batchId}_${test.subject}_${test.testName}_${test.testDate}`;
@@ -2475,16 +2517,28 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
 
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Panel title="Top 3 and Bottom 3 by Subject" icon={Users}>
-          <div className="space-y-3">
-            {Object.entries(learningView.subjectRankings).slice(0, 4).map(([subject, ranking]) => (
-              <div key={subject} className="rounded-2xl border border-slate-200 p-4">
-                <p className="font-semibold">{subject}</p>
-                <p className="mt-2 text-sm text-slate-600">Top: {ranking.top.map((item) => `${item.name} (${item.average}%)`).join(", ") || "-"}</p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Bottom: {ranking.bottom.map((item) => `${item.name} (${item.average}%)`).join(", ") || "-"}
-                </p>
-              </div>
-            ))}
+          <div className="space-y-4">
+            {Object.keys(learningView.subjectRankings).length > 0 && (
+              <SelectField
+                label="Select Subject"
+                value={selectedTopSubject}
+                onChange={setSelectedTopSubject}
+                options={Object.keys(learningView.subjectRankings).map((subj) => ({ value: subj, label: subj }))}
+              />
+            )}
+            {(() => {
+              const ranking = learningView.subjectRankings[selectedTopSubject];
+              if (!ranking) return <div className="text-sm text-slate-500">No data for selected subject</div>;
+              return (
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <p className="font-semibold">{selectedTopSubject}</p>
+                  <p className="mt-2 text-sm text-slate-600">Top: {ranking.top.map((item) => `${item.name} (${item.average}%)`).join(", ") || "-"}</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Bottom: {ranking.bottom.map((item) => `${item.name} (${item.average}%)`).join(", ") || "-"}
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         </Panel>
 
@@ -2603,9 +2657,9 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                         )}
                       </td>
                       <td className="py-3">{test.grade}</td>
-                      <td className="py-3">
+                      <td className="py-3 flex gap-2">
                         <button
-                          className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700"
+                          className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200 transition"
                           onClick={() =>
                             onSendScore(
                               buildScoreNotificationPayload(appState, student, test, appState.settings.templates.scoreReport),
@@ -2614,6 +2668,22 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                         >
                           Send WhatsApp
                         </button>
+                        {isAdmin && (
+                          <>
+                            <button
+                              className="rounded-xl bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
+                              onClick={() => onEditScore && onEditScore(test)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 transition"
+                              onClick={() => onDeleteScore && onDeleteScore(test.id)}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   );
@@ -2629,6 +2699,8 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
 
 function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, onTemplateSave }) {
   const [templates, setTemplates] = useState(appState.settings.templates);
+  const [broadcastSubject, setBroadcastSubject] = useState("");
+  const [broadcastMessage, setBroadcastMessage] = useState("");
 
   useEffect(() => {
     setTemplates(appState.settings.templates);
@@ -2710,6 +2782,32 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
           </div>
         </Panel>
       </div>
+
+      <Panel title="General Announcement Broadcast" icon={Bell}>
+        <div className="grid gap-4">
+          <InputField
+            label="Subject / Title"
+            value={broadcastSubject}
+            onChange={setBroadcastSubject}
+            placeholder="e.g. Upcoming Holidays"
+          />
+          <TextAreaField
+            label="Message Content"
+            value={broadcastMessage}
+            onChange={setBroadcastMessage}
+            placeholder="e.g. The coaching center will remain closed for 3 days starting from tomorrow."
+          />
+          <div>
+            <button
+              className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              disabled={!broadcastSubject.trim() || !broadcastMessage.trim()}
+              onClick={() => onBulk("broadcast", { subject: broadcastSubject, message: broadcastMessage })}
+            >
+              Prepare Broadcast for All Students
+            </button>
+          </div>
+        </div>
+      </Panel>
 
       <Panel title="Editable Notification Templates" icon={Edit3}>
         <div className="grid gap-4">
@@ -3278,7 +3376,7 @@ function NotificationModal({ payload, onClose, onSent }) {
   );
 }
 
-function BulkNotificationModal({ appState, type, candidates, onClose, onOpenNotification }) {
+function BulkNotificationModal({ appState, type, candidates, broadcastConfig, onClose, onOpenNotification }) {
   const testsByBatch = [...appState.tests].sort((a, b) => new Date(b.testDate) - new Date(a.testDate));
   const groupedBatches = appState.batches.map((batch) => ({
     batch,
@@ -3287,7 +3385,7 @@ function BulkNotificationModal({ appState, type, candidates, onClose, onOpenNoti
 
   return (
     <ModalShell
-      title={type === "fees" ? "Send Fee Reminders to All Defaulters" : "Send Score Report to Batch"}
+      title={type === "fees" ? "Send Fee Reminders to All Defaulters" : type === "broadcast" ? "General Broadcast" : "Send Score Report to Batch"}
       onClose={onClose}
       width="max-w-4xl"
     >
@@ -3304,6 +3402,21 @@ function BulkNotificationModal({ appState, type, candidates, onClose, onOpenNoti
               <button
                 className="rounded-xl bg-[#1e3a8a] px-3 py-2 text-xs font-semibold text-white"
                 onClick={() => onOpenNotification(buildFeeNotificationPayload(appState, item.student, item.record, item.reminderType))}
+              >
+                Open Send Button
+              </button>
+            </div>
+          ))
+        ) : type === "broadcast" ? (
+          appState.students.map((student) => (
+            <div key={student.id} className="flex items-center justify-between rounded-2xl border border-slate-200 p-3">
+              <div>
+                <p className="font-medium">{student.fullName}</p>
+                <p className="text-sm text-slate-500">{broadcastConfig?.subject}</p>
+              </div>
+              <button
+                className="rounded-xl bg-[#1e3a8a] px-3 py-2 text-xs font-semibold text-white"
+                onClick={() => onOpenNotification(buildBroadcastPayload(appState, student, broadcastConfig))}
               >
                 Open Send Button
               </button>
@@ -3505,6 +3618,26 @@ function buildScoreNotificationPayload(appState, student, test, template) {
     studentId: student?.id || "",
     type: "Score Report",
     phone: student?.parentWhatsapp || "",
+    message,
+  };
+}
+
+function buildBroadcastPayload(appState, student, config) {
+  const parentName = student.fatherName || student.motherName || "Parent";
+  const message = [
+    `Dear ${parentName},`,
+    ``,
+    `📢 *${config.subject}*`,
+    ``,
+    config.message,
+    ``,
+    `— ${appState.settings.coachingName}`,
+  ].join("\n");
+  return {
+    title: `${config.subject} • ${student.fullName}`,
+    studentId: student.id,
+    type: "Broadcast",
+    phone: student.parentWhatsapp,
     message,
   };
 }
