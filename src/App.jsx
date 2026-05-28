@@ -1353,6 +1353,9 @@ function App() {
                 onScheduleTest={() => setScheduleTestModalOpen(true)}
                 onSendScore={(payload) => setNotificationModal(payload)}
                 onDeleteGroup={handleDeleteScheduledTestGroup}
+                isAdmin={isAdmin}
+                onEditScore={(test) => setScoreModalOpen(test)}
+                onDeleteScore={deleteTestScore}
               />
             )}
 
@@ -1433,17 +1436,6 @@ function App() {
         />
       )}
 
-      {notificationModal && (
-        <NotificationModal
-          payload={notificationModal}
-          onClose={() => setNotificationModal(null)}
-          onSent={(studentId, type, message) => {
-            logNotification(studentId, type, message);
-            addToast("WhatsApp link opened");
-          }}
-        />
-      )}
-
       {bulkNotificationType && (
         <BulkNotificationModal
           appState={appState}
@@ -1452,6 +1444,17 @@ function App() {
           broadcastConfig={broadcastConfig}
           onClose={() => setBulkNotificationType(null)}
           onOpenNotification={setNotificationModal}
+        />
+      )}
+
+      {notificationModal && (
+        <NotificationModal
+          payload={notificationModal}
+          onClose={() => setNotificationModal(null)}
+          onSent={(studentId, type, message) => {
+            logNotification(studentId, type, message);
+            addToast("WhatsApp link opened");
+          }}
         />
       )}
 
@@ -1729,7 +1732,7 @@ function buildLearningView(appState, filter) {
     };
   });
 
-  const subjectRankings = defaultSubjects.reduce((acc, subject) => {
+  const subjectRankings = appState.settings.subjects.reduce((acc, subject) => {
     const entries = appState.students
       .map((student) => {
         const tests = appState.tests.filter((test) => test.studentId === student.id && test.subject === subject);
@@ -2074,16 +2077,38 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         <div className="space-y-3">
           {tests.map((test) => (
             <div key={test.id} className="rounded-2xl border border-slate-200 p-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <p className="font-medium">{test.testName}</p>
-                  <p className="text-sm text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">{test.testName}</p>
+                    <span className={`rounded-full px-3 py-1 text-[10px] font-semibold ${test.remarks === "Absent on Test Day" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}`}>
+                      {test.remarks === "Absent on Test Day" ? "Absent" : `${test.marksObtained}/${test.maxMarks}`}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-500 mt-1">
                     {test.subject} • {formatDate(test.testDate)}
                   </p>
                 </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${test.remarks === "Absent on Test Day" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}`}>
-                  {test.remarks === "Absent on Test Day" ? "Absent" : `${test.marksObtained}/${test.maxMarks}`}
-                </span>
+                {isAdmin && (
+                  <div className="flex gap-2">
+                    <button
+                      className="rounded-xl bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
+                      onClick={() => onEditScore && onEditScore(test)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 transition"
+                      onClick={() => {
+                        if (window.confirm("Delete this score?")) {
+                          onDeleteScore && onDeleteScore(test.id);
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -2378,12 +2403,12 @@ function FeesPage({ appState, feeGrid, feeFilters, setFeeFilters, onCellClick, o
   );
 }
 
-function LearningPage({ appState, learningView, filter, setFilter, onAddScore, onSaveScore, onScheduleTest, onSendScore, onDeleteGroup }) {
+function LearningPage({ appState, learningView, filter, setFilter, onAddScore, onSaveScore, onScheduleTest, onSendScore, onDeleteGroup, isAdmin, onEditScore, onDeleteScore }) {
   const [selectedTopSubject, setSelectedTopSubject] = useState("");
   
   useEffect(() => {
     const subjects = Object.keys(learningView.subjectRankings);
-    if (!selectedTopSubject && subjects.length > 0) {
+    if ((!selectedTopSubject || !subjects.includes(selectedTopSubject)) && subjects.length > 0) {
       setSelectedTopSubject(subjects[0]);
     }
   }, [learningView.subjectRankings, selectedTopSubject]);
@@ -2668,22 +2693,6 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                         >
                           Send WhatsApp
                         </button>
-                        {isAdmin && (
-                          <>
-                            <button
-                              className="rounded-xl bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
-                              onClick={() => onEditScore && onEditScore(test)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 transition"
-                              onClick={() => onDeleteScore && onDeleteScore(test.id)}
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
                       </td>
                     </tr>
                   );
