@@ -24,6 +24,7 @@ import {
   Trash2,
   Users,
   WalletCards,
+  MessageSquare,
   X,
   Lock,
   User as UserIcon,
@@ -105,6 +106,9 @@ function createCycleBoundary(year, monthIndex, dayOfMonth) {
 }
 
 function getFeeTenure(record, student) {
+  if (record?.transactionType === "OPENING_BALANCE") {
+    return { label: "Previous Outstanding Balance", startDate: null, endDate: null };
+  }
   const dueDate = record?.dueDate ? new Date(record.dueDate) : new Date(`${record.monthKey}-01T00:00:00`);
   const dueDay = Number(student?.feeDueDay || dueDate.getDate() || 1);
   const startDate = createCycleBoundary(dueDate.getFullYear(), dueDate.getMonth() - 1, dueDay);
@@ -372,7 +376,7 @@ function syncStudentFeeRecords(feeRecords, previousStudent, nextStudent) {
   const now = new Date();
 
   return feeRecords.map((record) => {
-    if (record.studentId !== previousStudent.id) {
+    if (record.studentId !== previousStudent.id || record.transactionType === "OPENING_BALANCE") {
       return record;
     }
 
@@ -414,7 +418,19 @@ function getPerformanceTag(percent) {
 }
 
 function replacePlaceholders(template, data) {
-  return Object.entries(data).reduce((acc, [key, value]) => acc.replaceAll(`[${key}]`, value ?? ""), template);
+  if (!template) return "";
+  let result = template;
+  Object.entries(data).forEach(([key, value]) => {
+    const valStr = value !== undefined && value !== null ? String(value) : "";
+    // Handle new {{variable}} syntax
+    result = result.replaceAll(`{{${key}}}`, valStr);
+    // Backward compatibility for [Variable] syntax
+    result = result.replaceAll(`[${key}]`, valStr);
+    // Capitalized backward compatibility
+    const capKey = key.charAt(0).toUpperCase() + key.slice(1);
+    result = result.replaceAll(`[${capKey}]`, valStr);
+  });
+  return result;
 }
 
 function generateStudentId(index, year) {
@@ -433,12 +449,6 @@ function seedData() {
     subjects: defaultSubjects,
     gradeBoundaries: { aPlus: 90, a: 80, b: 70, c: 55, d: 40 },
     academicYear: `${currentYear}-${currentYear + 1}`,
-    templates: {
-      feeReminder:
-        "Dear [ParentName], this is a reminder that [StudentName]'s tuition fee of Rs [Amount] for [Month] is due on [DueDate]. Please pay at the earliest. - [CoachingName]",
-      scoreReport:
-        "Dear [ParentName], [StudentName] scored [Marks]/[MaxMarks] ([Grade]) in [Subject] - [TestName] held on [Date]. Teacher's Remark: [Remark] Keep encouraging your child! - [CoachingName]",
-    },
   };
 
   return {
@@ -449,6 +459,7 @@ function seedData() {
     tests: [],
     scheduledTests: [],
     notificationLogs: [],
+    messageTemplates: [],
   };
 }
 
@@ -590,6 +601,11 @@ function App() {
     setIsRefreshing(true);
     try {
       const response = await fetch(STATE_API_URL, { headers: fetchHeaders });
+      let templatesRes = null;
+      if (isAdmin) {
+        templatesRes = await fetch(`${API_BASE_URL}/api/message-templates`, { headers: fetchHeaders });
+      }
+      
       if (!response.ok) {
         if (response.status === 401) {
           handleLogout();
@@ -598,6 +614,11 @@ function App() {
       }
 
       const data = await response.json();
+      if (isAdmin && templatesRes?.ok) {
+        data.messageTemplates = await templatesRes.json();
+      } else {
+        data.messageTemplates = [];
+      }
       if (!cancelledObj.cancelled) {
         if (!initialDataLoadedRef.current) {
           // On first load, seed prevTestsRef from localStorage to survive app restarts
@@ -736,22 +757,61 @@ function App() {
 
   function handleStudentSave(formData) {
     const isEditing = !!editingStudent;
+    const { openingBalance, ...studentData } = formData;
     let savedStudent = null;
     updateState((draft) => {
       if (isEditing) {
         const index = draft.students.findIndex((item) => item.id === editingStudent.id);
-        const updatedStudent = { ...draft.students[index], ...formData };
+        const updatedStudent = { ...draft.students[index], ...studentData };
         draft.students[index] = updatedStudent;
         draft.feeRecords = syncStudentFeeRecords(draft.feeRecords, editingStudent, updatedStudent);
         savedStudent = updatedStudent;
+        
+        const existingOpeningBalance = draft.feeRecords.find(r => r.studentId === updatedStudent.id && r.transactionType === "OPENING_BALANCE");
+        if (existingOpeningBalance) {
+          existingOpeningBalance.amountDue = Number(openingBalance) || 0;
+          existingOpeningBalance.lastUpdatedBy = authUser?.username || "system";
+          existingOpeningBalance.status = existingOpeningBalance.amountPaid >= existingOpeningBalance.amountDue ? "Paid" : existingOpeningBalance.amountPaid > 0 ? "Partial" : "Pending";
+        } else if (Number(openingBalance) > 0) {
+          draft.feeRecords.push({
+            id: uid(),
+            studentId: updatedStudent.id,
+            monthKey: "OPENING",
+            amountDue: Number(openingBalance),
+            amountPaid: 0,
+            dueDate: new Date(updatedStudent.admissionDate).toISOString(),
+            paymentDate: "",
+            mode: "",
+            remarks: "Migrated outstanding dues from manual records",
+            status: "Pending",
+            transactionType: "OPENING_BALANCE",
+            createdBy: authUser?.username || "system"
+          });
+        }
       } else {
         const student = {
           id: uid(),
           studentId: generateStudentId(draft.students.length + 1, new Date().getFullYear()),
-          ...formData,
+          ...studentData,
         };
         draft.students.push(student);
         draft.feeRecords.push(...createFeeRecordsForStudent(student));
+        if (Number(openingBalance) > 0) {
+          draft.feeRecords.push({
+            id: uid(),
+            studentId: student.id,
+            monthKey: "OPENING",
+            amountDue: Number(openingBalance),
+            amountPaid: 0,
+            dueDate: new Date(student.admissionDate).toISOString(),
+            paymentDate: "",
+            mode: "",
+            remarks: "Migrated outstanding dues from manual records",
+            status: "Pending",
+            transactionType: "OPENING_BALANCE",
+            createdBy: authUser?.username || "system"
+          });
+        }
         savedStudent = student;
       }
       return draft;
@@ -1425,7 +1485,57 @@ function App() {
               />
             )}
 
-            {activePage === "settings" && <SettingsPage settings={appState.settings} onSave={saveSettings} onUpdateAdmin={handleUpdateAdmin} />}
+            {activePage === "settings" && <SettingsPage settings={appState.settings} onSave={saveSettings} onUpdateAdmin={handleUpdateAdmin} onNavigate={setActivePage} />}
+
+            {activePage === "message-templates" && <MessageTemplatesPage 
+              appState={appState} 
+              onSave={async (id, data) => {
+                const res = await fetch(`${API_BASE_URL}/api/message-templates/${id}`, {
+                  method: 'PUT',
+                  headers: { ...fetchHeaders, 'Content-Type': 'application/json' },
+                  body: JSON.stringify(data)
+                });
+                if(res.ok) {
+                  const updated = await res.json();
+                  setAppState(prev => ({
+                    ...prev,
+                    messageTemplates: prev.messageTemplates.map(t => t._id === id ? updated : t)
+                  }));
+                  addToast("Template updated successfully", "success");
+                } else {
+                  addToast("Failed to update template", "danger");
+                }
+              }}
+              onReset={async (id) => {
+                const res = await fetch(`${API_BASE_URL}/api/message-templates/${id}/reset`, {
+                  method: 'POST',
+                  headers: fetchHeaders
+                });
+                if(res.ok) {
+                  const updated = await res.json();
+                  setAppState(prev => ({
+                    ...prev,
+                    messageTemplates: prev.messageTemplates.map(t => t._id === id ? updated : t)
+                  }));
+                  addToast("Template reset to default", "success");
+                } else {
+                  addToast("Failed to reset template", "danger");
+                }
+              }}
+              onPreview={async (content, data) => {
+                const res = await fetch(`${API_BASE_URL}/api/message-templates/preview`, {
+                  method: 'POST',
+                  headers: { ...fetchHeaders, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ content, data })
+                });
+                if(res.ok) {
+                  const json = await res.json();
+                  return json.preview;
+                }
+                return "Preview failed";
+              }}
+              onBack={() => setActivePage("settings")}
+            />}
 
             {activePage === "my-portal" && appState.students.length > 0 && (
               <div>
@@ -1470,6 +1580,7 @@ function App() {
       {studentFormOpen && (
         <StudentFormModal
           appState={appState}
+          isAdmin={isAdmin}
           initialValue={editingStudent}
           onClose={() => {
             setStudentFormOpen(false);
@@ -2061,8 +2172,8 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
 
 function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification, onEditScore, onDeleteScore }) {
   const batch = appState.batches.find((item) => item.id === student.batchId);
-  const feeHistory = appState.feeRecords
-    .filter((record) => record.studentId === student.id)
+  const allFeeRecords = appState.feeRecords.filter((record) => record.studentId === student.id);
+  const feeHistory = allFeeRecords
     .filter((record) => record.status !== "Pending" || isOverdueFeeRecord(record))
     .sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
   const tests = appState.tests.filter((test) => test.studentId === student.id).sort((a, b) => new Date(b.testDate) - new Date(a.testDate));
@@ -2103,8 +2214,43 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         <InfoPill label="Address" value={student.address} />
       </div>
 
+      <div className="rounded-3xl border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-bold text-slate-800 mb-4">Fee Summary</h4>
+        <div className="grid gap-4 md:grid-cols-4">
+          {(() => {
+            const pastRecords = allFeeRecords.filter(r => r.status === "Paid" || r.status === "Partial" || isOverdueFeeRecord(r));
+            const generatedMonthlyDues = pastRecords.filter(r => r.transactionType !== "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
+            const previousBalance = allFeeRecords.filter(r => r.transactionType === "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
+            const paymentsReceived = allFeeRecords.reduce((sum, r) => sum + (Number(r.amountPaid) || 0), 0);
+            const currentOutstanding = Math.max(0, previousBalance + generatedMonthlyDues - paymentsReceived);
+            
+            return (
+              <>
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Opening Due Balance</p>
+                  <p className="mt-1 text-xl font-bold text-slate-800">{formatCurrency(previousBalance)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Generated Monthly Dues</p>
+                  <p className="mt-1 text-xl font-bold text-slate-800">+{formatCurrency(generatedMonthlyDues)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Payments Received</p>
+                  <p className="mt-1 text-xl font-bold text-emerald-600">-{formatCurrency(paymentsReceived)}</p>
+                </div>
+                <div className="md:border-l md:border-slate-200 md:pl-4">
+                  <p className="text-xs font-semibold text-[#1e3a8a] uppercase tracking-wider">Total Outstanding</p>
+                  <p className={`mt-1 text-2xl font-black ${currentOutstanding > 0 ? "text-red-600" : "text-[#1e3a8a]"}`}>{formatCurrency(currentOutstanding)}</p>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
       <div className="flex flex-wrap gap-2">
         {[
+          ...(!isAdmin ? [["analytics", "Performance Analytics"]] : []),
           ["fees", "Fee Payment History"],
           ["tests", "Test Scores History"],
           ...(!isAdmin ? [["scheduled", "Scheduled Tests"]] : []),
@@ -2270,6 +2416,8 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
           </div>
         );
       })()}
+
+      {tab === "analytics" && <StudentAnalytics studentId={student.id} />}
     </div>
   );
 }
@@ -2908,33 +3056,11 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
         </div>
       </Panel>
 
-      <Panel title="Editable Notification Templates" icon={Edit3}>
-        <div className="grid gap-4">
-          <TextAreaField
-            label="Fee Reminder Template"
-            value={templates.feeReminder}
-            onChange={(value) => setTemplates((prev) => ({ ...prev, feeReminder: value }))}
-          />
-          <TextAreaField
-            label="Score Report Template"
-            value={templates.scoreReport}
-            onChange={(value) => setTemplates((prev) => ({ ...prev, scoreReport: value }))}
-          />
-          <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-            Placeholders: [StudentName], [ParentName], [Amount], [Month], [DueDate], [Marks], [MaxMarks], [Subject], [Grade], [Remark], [CoachingName]
-          </div>
-          <div>
-            <button className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white" onClick={() => onTemplateSave(templates)}>
-              Save Templates
-            </button>
-          </div>
-        </div>
-      </Panel>
     </div>
   );
 }
 
-function SettingsPage({ settings, onSave, onUpdateAdmin }) {
+function SettingsPage({ settings, onSave, onUpdateAdmin, onNavigate }) {
   const [form, setForm] = useState(settings);
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
@@ -2981,16 +3107,15 @@ function SettingsPage({ settings, onSave, onUpdateAdmin }) {
               ))}
             </div>
           </div>
-          <TextAreaField
-            label="Fee Reminder Template"
-            value={form.templates.feeReminder}
-            onChange={(value) => setForm((prev) => ({ ...prev, templates: { ...prev.templates, feeReminder: value } }))}
-          />
-          <TextAreaField
-            label="Score Report Template"
-            value={form.templates.scoreReport}
-            onChange={(value) => setForm((prev) => ({ ...prev, templates: { ...prev.templates, scoreReport: value } }))}
-          />
+          <div className="rounded-3xl border border-slate-200 p-4 flex flex-col justify-center items-start gap-3 bg-slate-50">
+            <div>
+              <p className="font-semibold text-slate-800">Message Templates</p>
+              <p className="text-sm text-slate-500">Manage automated messages for WhatsApp, SMS, and Email.</p>
+            </div>
+            <button className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-white flex items-center gap-2" onClick={() => onNavigate("message-templates")}>
+              <MessageSquare size={16} /> Manage Templates
+            </button>
+          </div>
         </div>
         <div className="mt-5">
           <button className="rounded-xl bg-[#1e3a8a] px-4 py-2 text-sm font-medium text-white" onClick={() => onSave(form)}>
@@ -3166,11 +3291,15 @@ function TransientNotificationModal({ payload, onClose, onSent }) {
   );
 }
 
-function StudentFormModal({ appState, initialValue, onClose, onSave }) {
+function StudentFormModal({ appState, initialValue, onClose, onSave, isAdmin }) {
   const defaultAdmissionDate = new Date().toISOString().slice(0, 10);
   const defaultFeeDueDay = Number(defaultAdmissionDate.slice(8, 10));
+  
+  const existingOpeningRecord = initialValue ? appState.feeRecords.find(r => r.studentId === initialValue.id && r.transactionType === "OPENING_BALANCE") : null;
+  const initialOpeningBalance = existingOpeningRecord ? existingOpeningRecord.amountDue : 0;
+
   const [form, setForm] = useState(
-    initialValue || {
+    initialValue ? { ...initialValue, openingBalance: initialOpeningBalance } : {
       fullName: "",
       fatherName: "",
       motherName: "",
@@ -3189,6 +3318,7 @@ function StudentFormModal({ appState, initialValue, onClose, onSave }) {
       monthlyFeeAmount: 0,
       discount: 0,
       feeDueDay: defaultFeeDueDay,
+      openingBalance: 0,
     },
   );
 
@@ -3241,6 +3371,16 @@ function StudentFormModal({ appState, initialValue, onClose, onSave }) {
         <InputField label="Monthly Fee Amount" type="number" value={form.monthlyFeeAmount} onChange={(value) => setForm((prev) => ({ ...prev, monthlyFeeAmount: Number(value) }))} />
         <InputField label="Discount" type="number" value={form.discount} onChange={(value) => setForm((prev) => ({ ...prev, discount: Number(value) }))} />
         <InputField label="Fee Due Date (day)" type="number" value={form.feeDueDay} onChange={(value) => setForm((prev) => ({ ...prev, feeDueDay: Number(value) }))} />
+        <div className="md:col-span-3">
+          <label className="mb-2 block text-sm font-medium text-slate-700">Opening Due Balance (₹) <span className="text-xs text-slate-500 font-normal ml-2">(Enter any pending amount from manual records before migration to the CMS)</span></label>
+          <input
+            type="number"
+            disabled={!isAdmin}
+            value={form.openingBalance}
+            onChange={(e) => setForm((prev) => ({ ...prev, openingBalance: Math.max(0, Number(e.target.value)) }))}
+            className={`w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-800 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a] ${!isAdmin ? 'bg-slate-100 cursor-not-allowed' : ''}`}
+          />
+        </div>
         <div className="md:col-span-3">
           <TextAreaField label="Full Address" value={form.address} onChange={(value) => setForm((prev) => ({ ...prev, address: value }))} />
         </div>
@@ -3557,181 +3697,109 @@ function BulkNotificationModal({ appState, type, candidates, broadcastConfig, on
   );
 }
 
-function buildProfileUpdatedPayload(student, coachingName) {
-  const parentName = student.fatherName || student.motherName || "Parent";
-  const message = [
-    `Dear ${parentName},`,
-    ``,
-    `This is to inform you that *${student.fullName}*'s profile has been updated at *${coachingName}*.`,
-    ``,
-    `If you have any questions, please contact us.`,
-    ``,
-    `— ${coachingName}`,
-  ].join("\n");
+function buildTemplatePayload(appState, student, templateKey, data, payloadOverrides = {}) {
+  const template = appState.messageTemplates?.find(t => t.templateKey === templateKey);
+  const content = template?.content || "";
+  const batch = appState.batches?.find(b => b.id === student.batchId);
+  const message = replacePlaceholders(content, {
+    studentName: student.fullName,
+    parentName: student.fatherName || student.motherName || "Parent",
+    studentId: student.studentId,
+    class: student.classGrade,
+    subjects: student.subjects ? student.subjects.join(", ") : "",
+    batch: batch ? batch.name : "",
+    contactNumber: appState.settings.phone,
+    coachingName: appState.settings.coachingName,
+    ...data
+  });
+  
   return {
-    title: `Profile Updated • ${student.fullName}`,
+    title: payloadOverrides.title || `${template?.templateName || templateKey} • ${student.fullName}`,
     studentId: student.id,
-    type: "Profile Update",
+    type: payloadOverrides.type || template?.templateName || "Notification",
     phone: student.parentWhatsapp,
     message,
+    ...payloadOverrides
   };
 }
 
-function buildNewEnrollmentPayload(student, coachingName) {
-  const parentName = student.fatherName || student.motherName || "Parent";
-  const message = [
-    `Dear ${parentName},`,
-    ``,
-    `Welcome! 🎉 *${student.fullName}* has been successfully enrolled at *${coachingName}*.`,
-    ``,
-    `📋 *Details:*`,
-    `• Student ID: ${student.studentId}`,
-    `• Class: ${student.classGrade}`,
-    student.subjects?.length ? `• Subjects: ${student.subjects.join(", ")}` : "",
-    ``,
-    `We look forward to a great learning journey together! 📚`,
-    ``,
-    `— ${coachingName}`,
-  ].filter(Boolean).join("\n");
-  return {
-    title: `New Enrollment • ${student.fullName}`,
-    studentId: student.id,
-    type: "New Enrollment",
-    phone: student.parentWhatsapp,
-    message,
-  };
+function buildProfileUpdatedPayload(appState, student) {
+  return buildTemplatePayload(appState, student, "profile_updated", {});
 }
 
-function buildTestScorePayload(student, score, grade, coachingName) {
-  const parentName = student.fatherName || student.motherName || "Parent";
+function buildNewEnrollmentPayload(appState, student) {
+  return buildTemplatePayload(appState, student, "new_student_admission", {
+    admissionDate: formatDate(student.admissionDate),
+  });
+}
+
+function buildTestScorePayload(appState, student, score, grade) {
   const percent = Math.round((Number(score.marksObtained) / Number(score.maxMarks || 1)) * 100);
-  const message = [
-    `Dear ${parentName},`,
-    ``,
-    `📝 *Test Score Update* for *${student.fullName}*:`,
-    ``,
-    `• Subject: ${score.subject}`,
-    `• Test: ${score.testName}`,
-    `• Marks: *${score.marksObtained}/${score.maxMarks}* (${percent}%)`,
-    `• Grade: *${grade}*`,
-    score.remarks ? `• Remarks: ${score.remarks}` : "",
-    ``,
-    `Keep encouraging your child! 🌟`,
-    ``,
-    `— ${coachingName}`,
-  ].filter(Boolean).join("\n");
-  return {
-    title: `Test Score • ${student.fullName}`,
-    studentId: student.id,
-    type: "Test Score",
-    phone: student.parentWhatsapp,
-    message,
-  };
+  return buildTemplatePayload(appState, student, "marks_published", {
+    testName: score.testName,
+    subject: score.subject,
+    marks: score.marksObtained,
+    maxMarks: score.maxMarks,
+    percentage: percent,
+    grade: grade,
+    remarks: score.remarks,
+  });
 }
 
-function buildFeePaymentUpdatePayload(student, payment, status, coachingName) {
-  const parentName = student.fatherName || student.motherName || "Parent";
+function buildFeePaymentUpdatePayload(appState, student, payment, status) {
   const monthLabel = months[Number((payment.monthKey || "").slice(5, 7)) - 1] || payment.monthKey;
-  const message = [
-    `Dear ${parentName},`,
-    ``,
-    `💰 *Fee Payment Update* for *${student.fullName}*:`,
-    ``,
-    `• Month: ${monthLabel}`,
-    `• Amount Paid: ${formatCurrency(payment.amountPaid)}`,
-    `• Amount Due: ${formatCurrency(payment.amountDue)}`,
-    `• Status: *${status}*`,
-    payment.mode ? `• Mode: ${payment.mode}` : "",
-    ``,
-    status === "Paid" ? `Thank you for the payment! ✅` : `Please clear the remaining balance at the earliest. 🙏`,
-    ``,
-    `— ${coachingName}`,
-  ].filter(Boolean).join("\n");
-  return {
-    title: `Fee Update • ${student.fullName}`,
-    studentId: student.id,
-    type: "Fee Update",
-    phone: student.parentWhatsapp,
-    message,
-  };
+  return buildTemplatePayload(appState, student, "payment_confirmation", {
+    month: monthLabel,
+    paymentAmount: payment.amountPaid,
+    mode: payment.mode,
+  });
 }
 
 function buildTestPrepNotificationPayload(appState, student, test) {
-  const parentName = student.fatherName || student.motherName || "Parent";
-  const message = [
-    `Dear ${parentName},`,
-    ``,
-    `📅 *Upcoming Test Scheduled* for *${student.fullName}*:`,
-    ``,
-    `• Subject: ${test.subject}`,
-    `• Test: ${test.testName}`,
-    `• Date: ${formatDate(test.testDate)}`,
-    `• Max Marks: ${test.maxMarks}`,
-    ``,
-    `Please ensure your child is prepared! 📚`,
-    ``,
-    `— ${appState.settings.coachingName}`
-  ].join("\n");
-  return {
-    title: `Test Prep • ${student.fullName}`,
-    studentId: student.id,
-    type: "Test Prep",
-    phone: student.parentWhatsapp,
-    message,
-  };
+  return buildTemplatePayload(appState, student, "test_created", {
+    subject: test.subject,
+    testName: test.testName,
+    testDate: formatDate(test.testDate),
+    maxMarks: test.maxMarks,
+  });
 }
 
 function buildFeeNotificationPayload(appState, student, record, reminderType) {
-  const message = replacePlaceholders(appState.settings.templates.feeReminder, {
-    StudentName: student.fullName,
-    ParentName: student.fatherName || student.motherName,
-    Amount: String(record.amountDue - record.amountPaid),
-    Month: months[Number(record.monthKey.slice(5, 7)) - 1],
-    DueDate: formatDate(record.dueDate),
-    CoachingName: appState.settings.coachingName,
-  });
-  return {
-    title: `${reminderType} • ${student.fullName}`,
-    studentId: student.id,
-    type: reminderType,
-    phone: student.parentWhatsapp,
-    message,
-  };
+  let templateKey = "fee_due_reminder";
+  if (reminderType === "Overdue Notice" || reminderType === "Final Notice") {
+    templateKey = "fee_overdue_reminder";
+  }
+  return buildTemplatePayload(appState, student, templateKey, {
+    dueAmount: record.amountDue - record.amountPaid,
+    totalOutstanding: record.amountDue - record.amountPaid, // Could be improved if we calculate full outstanding
+    dueDate: formatDate(record.dueDate),
+    month: months[Number(record.monthKey.slice(5, 7)) - 1],
+  }, { type: reminderType, title: `${reminderType} • ${student.fullName}` });
 }
 
-function buildScoreNotificationPayload(appState, student, test, template) {
-  const message = replacePlaceholders(template, {
-    ParentName: student?.fatherName || student?.motherName || "Parent",
-    StudentName: student?.fullName || "",
-    Marks: String(test.marksObtained),
-    MaxMarks: String(test.maxMarks),
-    Grade: test.grade,
-    Subject: test.subject,
-    TestName: test.testName,
-    Date: formatDate(test.testDate),
-    Remark: test.remarks,
-    CoachingName: appState.settings.coachingName,
+function buildScoreNotificationPayload(appState, student, test) {
+  // Kept for compatibility, redirects to standard score payload
+  const percent = Math.round((Number(test.marksObtained) / Number(test.maxMarks || 1)) * 100);
+  return buildTemplatePayload(appState, student, "marks_published", {
+    testName: test.testName,
+    subject: test.subject,
+    marks: test.marksObtained,
+    maxMarks: test.maxMarks,
+    percentage: percent,
+    grade: test.grade,
+    remarks: test.remarks,
   });
-  return {
-    title: `Score Notification • ${student?.fullName || "Student"}`,
-    studentId: student?.id || "",
-    type: "Score Report",
-    phone: student?.parentWhatsapp || "",
-    message,
-  };
 }
 
 function buildBroadcastPayload(appState, student, config) {
+  // Fallback to old behavior since broadcast message is provided dynamically by user
   const parentName = student.fatherName || student.motherName || "Parent";
-  const message = [
-    `Dear ${parentName},`,
-    ``,
-    `📢 *${config.subject}*`,
-    ``,
-    config.message,
-    ``,
-    `— ${appState.settings.coachingName}`,
-  ].join("\n");
+  const message = replacePlaceholders(`Dear {{parentName}},\n\n📢 *{{subject}}*\n\n{{message}}\n\n— {{coachingName}}`, {
+    parentName,
+    subject: config.subject,
+    message: config.message,
+    coachingName: appState.settings.coachingName,
+  });
   return {
     title: `${config.subject} • ${student.fullName}`,
     studentId: student.id,
@@ -3999,6 +4067,437 @@ function LoginPage({ onLogin, error, isLoading }) {
               </a>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageTemplatesPage({ appState, onSave, onReset, onPreview, onBack }) {
+  const [activeTab, setActiveTab] = useState("whatsapp");
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [editingTemplate, setEditingTemplate] = useState(null);
+  const [previewingTemplate, setPreviewingTemplate] = useState(null);
+
+  const categories = [
+    { id: "all", label: "All Categories" },
+    { id: "admission", label: "Admission" },
+    { id: "fee", label: "Fee Updates" },
+    { id: "exam", label: "Exam & Results" },
+    { id: "attendance", label: "Attendance" },
+    { id: "general", label: "General" },
+    { id: "announcement", label: "Announcements" },
+  ];
+
+  const channels = [
+    { id: "whatsapp", label: "WhatsApp" },
+    { id: "sms", label: "SMS (Coming Soon)" },
+    { id: "email", label: "Email (Coming Soon)" },
+  ];
+
+  const filteredTemplates = (appState.messageTemplates || []).filter(t => {
+    if (t.channel !== activeTab) return false;
+    if (selectedCategory !== "all" && t.category !== selectedCategory) return false;
+    if (searchQuery && !t.templateName.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    return true;
+  });
+
+  return (
+    <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+      <div className="flex items-center gap-4 border-b border-slate-200 pb-4">
+        <button className="rounded-xl border border-slate-200 p-2 hover:bg-slate-50 transition text-slate-600" onClick={onBack}>
+          <ChevronLeft size={20} />
+        </button>
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800">Message Templates</h2>
+          <p className="text-slate-500 text-sm">Manage automated system messages.</p>
+        </div>
+      </div>
+
+      <div className="flex gap-4 border-b border-slate-200">
+        {channels.map(c => (
+          <button
+            key={c.id}
+            onClick={() => setActiveTab(c.id)}
+            className={`pb-3 px-2 text-sm font-semibold border-b-2 transition ${activeTab === c.id ? "border-[#1e3a8a] text-[#1e3a8a]" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-col md:flex-row gap-6">
+        <div className="md:w-64 space-y-2">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Categories</p>
+          {categories.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setSelectedCategory(c.id)}
+              className={`w-full text-left px-4 py-2 rounded-xl text-sm font-medium transition ${selectedCategory === c.id ? "bg-[#1e3a8a]/10 text-[#1e3a8a]" : "text-slate-600 hover:bg-slate-50"}`}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 space-y-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input
+              type="text"
+              placeholder="Search templates..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a]"
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredTemplates.map(t => (
+              <div key={t._id} className="group relative rounded-3xl border border-slate-200 bg-white p-5 hover:border-[#1e3a8a]/30 hover:shadow-lg transition cursor-pointer flex flex-col" onClick={() => setEditingTemplate(t)}>
+                <div className="flex items-start justify-between mb-2">
+                  <h3 className="font-bold text-slate-800 leading-tight">{t.templateName}</h3>
+                  <div className={`w-2 h-2 rounded-full mt-1.5 ${t.isActive ? "bg-emerald-500" : "bg-slate-300"}`} title={t.isActive ? "Active" : "Inactive"} />
+                </div>
+                <p className="text-xs text-slate-500 mb-4 bg-slate-100 w-fit px-2 py-0.5 rounded-full capitalize">{t.category}</p>
+                <div className="mt-auto">
+                  <p className="text-[10px] text-slate-400">Updated: {new Date(t.lastUpdatedAt).toLocaleDateString()}</p>
+                  <p className="text-[10px] text-slate-400 truncate">By {t.lastUpdatedBy}</p>
+                </div>
+                <div className="absolute inset-0 bg-[#1e3a8a]/5 opacity-0 group-hover:opacity-100 transition rounded-3xl pointer-events-none" />
+              </div>
+            ))}
+            {filteredTemplates.length === 0 && (
+              <div className="col-span-full py-12 text-center text-slate-500">
+                <MessageSquare className="mx-auto mb-3 opacity-20" size={48} />
+                <p>No templates found.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {editingTemplate && (
+        <TemplateEditorModal 
+          template={editingTemplate}
+          onClose={() => setEditingTemplate(null)}
+          onSave={async (data) => {
+            await onSave(editingTemplate._id, data);
+            setEditingTemplate(null);
+          }}
+          onReset={() => {
+            if(window.confirm("Are you sure you want to reset this template to its default content?")) {
+              onReset(editingTemplate._id);
+              setEditingTemplate(null);
+            }
+          }}
+          onPreviewClick={() => setPreviewingTemplate(editingTemplate)}
+        />
+      )}
+
+      {previewingTemplate && (
+        <TemplatePreviewModal 
+          template={previewingTemplate}
+          onClose={() => setPreviewingTemplate(null)}
+          onPreview={onPreview}
+        />
+      )}
+    </div>
+  );
+}
+
+function TemplateEditorModal({ template, onClose, onSave, onReset, onPreviewClick }) {
+  const [content, setContent] = useState(template.content);
+  const [isActive, setIsActive] = useState(template.isActive);
+  const textareaRef = useRef(null);
+
+  const insertVariable = (variable) => {
+    const textToInsert = `{{${variable}}}`;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const newContent = content.substring(0, start) + textToInsert + content.substring(end);
+    setContent(newContent);
+    
+    // Reset focus and cursor position
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + textToInsert.length, start + textToInsert.length);
+    }, 0);
+  };
+
+  return (
+    <ModalShell title={`Edit: ${template.templateName}`} onClose={onClose} width="max-w-4xl">
+      <div className="flex flex-col md:flex-row gap-6">
+        <div className="flex-1 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Message Content</label>
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              className="w-full h-64 rounded-2xl border border-slate-200 p-4 text-sm font-medium text-slate-800 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a] whitespace-pre-wrap leading-relaxed"
+              placeholder="Type your message here..."
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} className="w-4 h-4 accent-[#1e3a8a]" />
+              <span className="text-sm font-medium text-slate-700">Template Active</span>
+            </label>
+          </div>
+        </div>
+        
+        <div className="md:w-72 space-y-4">
+          <div className="rounded-2xl bg-blue-50/50 border border-blue-100 p-4">
+            <p className="text-sm font-bold text-blue-900 mb-3 flex items-center gap-2">
+              <Plus size={16} /> Insert Variables
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {template.variables.map(v => (
+                <button
+                  key={v}
+                  onClick={() => insertVariable(v)}
+                  className="px-2 py-1 rounded bg-white border border-blue-200 text-xs font-medium text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition"
+                  title={`Insert {{${v}}}`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <button
+            onClick={onPreviewClick}
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition flex items-center justify-center gap-2"
+          >
+            <Eye size={16} /> Preview Data
+          </button>
+        </div>
+      </div>
+      
+      <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+        <button onClick={onReset} className="text-sm font-semibold text-red-600 hover:text-red-700 transition px-2 py-1">
+          Reset to Default
+        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={onClose} className="rounded-xl px-5 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
+            Cancel
+          </button>
+          <button 
+            onClick={() => onSave({ content, isActive })}
+            className="rounded-xl bg-[#1e3a8a] px-6 py-2 text-sm font-semibold text-white shadow hover:bg-blue-900 transition flex items-center gap-2"
+          >
+            <Save size={16} /> Save Changes
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function TemplatePreviewModal({ template, onClose, onPreview }) {
+  const [previewText, setPreviewText] = useState("Loading preview...");
+  const [data, setData] = useState({});
+
+  useEffect(() => {
+    // Generate dummy data based on required variables
+    const dummy = {};
+    template.variables.forEach(v => {
+      switch(v) {
+        case "studentName": dummy[v] = "Rahul Kumar"; break;
+        case "parentName": dummy[v] = "Rajesh Kumar"; break;
+        case "studentId": dummy[v] = "CC-2026-001"; break;
+        case "class": dummy[v] = "Class 10"; break;
+        case "batch": dummy[v] = "Morning Batch A"; break;
+        case "dueAmount": dummy[v] = "2500"; break;
+        case "totalOutstanding": dummy[v] = "2500"; break;
+        case "paymentAmount": dummy[v] = "2500"; break;
+        case "month": dummy[v] = "June"; break;
+        case "dueDate": dummy[v] = "10 Jun 2026"; break;
+        case "admissionDate": dummy[v] = "01 Jun 2026"; break;
+        case "mode": dummy[v] = "UPI"; break;
+        case "testName": dummy[v] = "Weekly Test 1"; break;
+        case "subject": dummy[v] = "Mathematics"; break;
+        case "marks": dummy[v] = "45"; break;
+        case "maxMarks": dummy[v] = "50"; break;
+        case "percentage": dummy[v] = "90"; break;
+        case "grade": dummy[v] = "A+"; break;
+        case "rank": dummy[v] = "1"; break;
+        case "coachingName": dummy[v] = "Kishan Classes"; break;
+        case "contactNumber": dummy[v] = "+91 9876543210"; break;
+        case "date": dummy[v] = "05 Jun 2026"; break;
+        case "subjects": dummy[v] = "Mathematics, Science"; break;
+        default: dummy[v] = `[${v}]`;
+      }
+    });
+    setData(dummy);
+  }, [template]);
+
+  useEffect(() => {
+    if (Object.keys(data).length > 0) {
+      onPreview(template.content, data).then(setPreviewText);
+    }
+  }, [data, template.content, onPreview]);
+
+  return (
+    <ModalShell title={`Preview: ${template.templateName}`} onClose={onClose} width="max-w-2xl">
+      <div className="space-y-4">
+        <div className="rounded-3xl bg-slate-50 p-6 border border-slate-100">
+          <p className="whitespace-pre-wrap text-slate-800 leading-relaxed">{previewText}</p>
+        </div>
+        <div className="flex justify-end gap-3">
+          <button className="rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-semibold hover:bg-slate-50 transition" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+function StudentAnalytics({ studentId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    async function fetchAnalytics() {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${API_BASE_URL}/api/analytics/${studentId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!res.ok) {
+          throw new Error("Failed to load analytics");
+        }
+        const json = await res.json();
+        setData(json);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchAnalytics();
+  }, [studentId]);
+
+  if (loading) return <div className="py-12 text-center text-slate-500">Loading analytics...</div>;
+  if (error) return <div className="py-12 text-center text-red-500">{error}</div>;
+  if (!data || !data.summary) return <div className="py-12 text-center text-slate-500">No data available</div>;
+
+  const { summary, growthTrend, subjectPerformance, batchComparison, insights } = data;
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="grid gap-4 md:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Overall Average</p>
+          <p className="mt-2 text-3xl font-black text-[#1e3a8a]">{summary.overallAverage}%</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Improvement</p>
+          <p className={`mt-2 text-3xl font-black ${summary.improvementPercentage > 0 ? "text-emerald-600" : summary.improvementPercentage < 0 ? "text-red-600" : "text-slate-700"}`}>
+            {summary.improvementPercentage > 0 ? "+" : ""}{summary.improvementPercentage}%
+          </p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Current Rank</p>
+          <p className="mt-2 text-3xl font-black text-slate-800">{summary.currentRank > 0 ? `#${summary.currentRank}` : "N/A"}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tests Attempted</p>
+          <p className="mt-2 text-3xl font-black text-slate-800">{summary.totalTestsAttempted}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5">
+          <h4 className="mb-4 text-lg font-bold text-slate-800">Growth Trend</h4>
+          {growthTrend.length > 0 ? (
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={growthTrend}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="testName" tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                  <YAxis tick={{ fontSize: 12 }} stroke="#94a3b8" domain={[0, 100]} />
+                  <Tooltip contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" }} />
+                  <Line type="monotone" dataKey="percentage" stroke="#1e3a8a" strokeWidth={3} dot={{ fill: "#1e3a8a", strokeWidth: 2, r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">Not enough data for trend.</p>
+          )}
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-white p-5">
+          <h4 className="mb-4 text-lg font-bold text-slate-800">Subject Performance</h4>
+          {subjectPerformance.length > 0 ? (
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={subjectPerformance}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="subject" tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                  <YAxis tick={{ fontSize: 12 }} stroke="#94a3b8" domain={[0, 100]} />
+                  <Tooltip contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" }} cursor={{ fill: "#f1f5f9" }} />
+                  <Bar dataKey="score" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No subject data available.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-5">
+        <h4 className="mb-4 text-lg font-bold text-slate-800">Student vs Batch Average</h4>
+        {batchComparison.length > 0 ? (
+          <div className="h-72 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={batchComparison}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="subject" tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                <YAxis tick={{ fontSize: 12 }} stroke="#94a3b8" domain={[0, 100]} />
+                <Tooltip contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" }} cursor={{ fill: "#f1f5f9" }} />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: "20px" }} />
+                <Bar dataKey="studentScore" name="Student Score" fill="#1e3a8a" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="batchAvg" name="Batch Average" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">No batch comparison data available.</p>
+        )}
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
+        <h4 className="mb-4 text-lg font-bold text-slate-800 flex items-center gap-2"><BarChart3 size={20} className="text-[#1e3a8a]" /> Performance Insights</h4>
+        <div className="grid gap-6 md:grid-cols-3">
+          <div>
+            <p className="font-semibold text-emerald-700 mb-2">Strengths</p>
+            <ul className="space-y-1 text-sm text-slate-600 list-disc pl-4">
+              {insights.strengths.map((str, i) => <li key={i}>{str}</li>)}
+              {insights.strengths.length === 0 && <li>No specific strengths identified yet.</li>}
+            </ul>
+          </div>
+          <div>
+            <p className="font-semibold text-orange-600 mb-2">Needs Improvement</p>
+            <ul className="space-y-1 text-sm text-slate-600 list-disc pl-4">
+              {insights.needsImprovement.map((str, i) => <li key={i}>{str}</li>)}
+              {insights.needsImprovement.length === 0 && <li>On track across all subjects.</li>}
+            </ul>
+          </div>
+          <div>
+            <p className="font-semibold text-blue-700 mb-2">Achievements</p>
+            <ul className="space-y-1 text-sm text-slate-600 list-disc pl-4">
+              {insights.achievements.map((str, i) => <li key={i}>{str}</li>)}
+              {insights.achievements.length === 0 && <li>Keep taking tests to unlock achievements!</li>}
+            </ul>
+          </div>
         </div>
       </div>
     </div>
