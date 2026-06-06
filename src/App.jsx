@@ -57,10 +57,10 @@ import {
 import { isNative } from "./utils/platform";
 import { StudentProgressPDF } from "./reports/StudentProgressPDF";
 import { generatePDF } from "./utils/generatePDF";
-
+import { uid, monthKeyFromDate, createCycleBoundary, buildFeeRecord, getGrade, getPerformanceTag } from "./utils/shared";
+import { seedData, defaultSubjects } from "./utils/seedData";
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const defaultSubjects = ["Maths", "Science", "English", "Physics", "Chemistry", "Biology", "History", "Geography"];
 const deepBlue = "#1e3a8a";
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 const STATE_API_URL = `${API_BASE_URL}/api/state`;
@@ -78,14 +78,6 @@ const studentNavItems = [
   { id: "my-portal", label: "My Portal", icon: UserIcon },
 ];
 
-// Fix #19: UUID fallback for older browsers
-const uid = () =>
-  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-      const r = (Math.random() * 16) | 0;
-      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-    });
 const nowIso = () => new Date().toISOString();
 const formatCurrency = (value) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
@@ -97,13 +89,7 @@ const formatDate = (value) =>
     : "-";
 const formatShortDate = (value) =>
   value ? new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short" }).format(new Date(value)) : "-";
-const monthKeyFromDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 const subjectColors = ["#1e3a8a", "#2563eb", "#0ea5e9", "#14b8a6", "#f59e0b", "#ef4444", "#8b5cf6", "#10b981"];
-
-function createCycleBoundary(year, monthIndex, dayOfMonth) {
-  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
-  return new Date(year, monthIndex, Math.min(dayOfMonth, lastDay));
-}
 
 function getFeeTenure(record, student) {
   if (record?.transactionType === "OPENING_BALANCE") {
@@ -120,22 +106,7 @@ function getFeeTenure(record, student) {
   };
 }
 
-function buildFeeRecord(student, date, overrides = {}) {
-  const dueDate = createCycleBoundary(date.getFullYear(), date.getMonth(), Number(student.feeDueDay || 1));
-  return {
-    id: uid(),
-    studentId: student.id,
-    monthKey: monthKeyFromDate(date),
-    amountDue: student.monthlyFeeAmount,
-    amountPaid: 0,
-    dueDate: dueDate.toISOString(),
-    paymentDate: "",
-    mode: "",
-    remarks: "Awaiting payment",
-    status: "Pending",
-    ...overrides,
-  };
-}
+
 
 function createFeeRecordsForStudent(student) {
   const records = [];
@@ -401,21 +372,7 @@ function syncStudentFeeRecords(feeRecords, previousStudent, nextStudent) {
   });
 }
 
-function getGrade(percent, boundaries) {
-  if (percent >= boundaries.aPlus) return "A+";
-  if (percent >= boundaries.a) return "A";
-  if (percent >= boundaries.b) return "B";
-  if (percent >= boundaries.c) return "C";
-  if (percent >= boundaries.d) return "D";
-  return "F";
-}
 
-function getPerformanceTag(percent) {
-  if (percent >= 90) return "Excellent";
-  if (percent >= 75) return "Good";
-  if (percent >= 50) return "Average";
-  return "Needs Improvement";
-}
 
 function replacePlaceholders(template, data) {
   if (!template) return "";
@@ -435,32 +392,6 @@ function replacePlaceholders(template, data) {
 
 function generateStudentId(index, year) {
   return `CC-${year}-${String(index).padStart(3, "0")}`;
-}
-
-// Fix #2 & #5: Cleaned seedData — no broken array access, aligned with server
-function seedData() {
-  const currentYear = new Date().getFullYear();
-  const settings = {
-    coachingName: "Kishan Classes",
-    address: "Gautam Nagar, Agra",
-    phone: "+91 9389915375",
-    logo: "",
-    feeDueDay: 5,
-    subjects: defaultSubjects,
-    gradeBoundaries: { aPlus: 90, a: 80, b: 70, c: 55, d: 40 },
-    academicYear: `${currentYear}-${currentYear + 1}`,
-  };
-
-  return {
-    settings,
-    batches: [],
-    students: [],
-    feeRecords: [],
-    tests: [],
-    scheduledTests: [],
-    notificationLogs: [],
-    messageTemplates: [],
-  };
 }
 
 function App() {
@@ -822,11 +753,10 @@ function App() {
 
     // Trigger transient (non-persisted) WhatsApp notification to parent
     if (savedStudent && savedStudent.parentWhatsapp) {
-      const coachingName = latestStateRef.current.settings.coachingName;
       if (isEditing) {
-        setTransientNotification(buildProfileUpdatedPayload(savedStudent, coachingName));
+        setTransientNotification(buildProfileUpdatedPayload(latestStateRef.current, savedStudent));
       } else {
-        setTransientNotification(buildNewEnrollmentPayload(savedStudent, coachingName));
+        setTransientNotification(buildNewEnrollmentPayload(latestStateRef.current, savedStudent));
       }
     }
   }
@@ -954,8 +884,7 @@ function App() {
     if (student && student.parentWhatsapp) {
       const finalStatus = Number(payment.amountPaid) >= Number(payment.amountDue)
         ? "Paid" : Number(payment.amountPaid) > 0 ? "Partial" : "Pending";
-      const coachingName = latestStateRef.current.settings.coachingName;
-      setTransientNotification(buildFeePaymentUpdatePayload(student, payment, finalStatus, coachingName));
+      setTransientNotification(buildFeePaymentUpdatePayload(latestStateRef.current, student, payment, finalStatus));
     }
   }
 
@@ -994,8 +923,7 @@ function App() {
     if (!score.id || score.scheduledTestId) {
       const student = latestStateRef.current.students.find((s) => s.id === score.studentId);
       if (student && student.parentWhatsapp) {
-        const coachingName = latestStateRef.current.settings.coachingName;
-        setTransientNotification(buildTestScorePayload(student, score, computedGrade, coachingName));
+        setTransientNotification(buildTestScorePayload(latestStateRef.current, student, score, computedGrade));
       }
     }
   }
@@ -1030,11 +958,12 @@ function App() {
   }
 
   function handleScheduleTestSave(testData, studentIds) {
+    let newTests = [];
     updateState((draft) => {
       studentIds.forEach(studentId => {
         const student = draft.students.find((s) => s.id === studentId);
         if (student) {
-          draft.scheduledTests.push({
+          const t = {
             id: uid(),
             studentId,
             batchId: student.batchId || "",
@@ -1042,13 +971,19 @@ function App() {
             testName: testData.testName,
             testDate: testData.testDate,
             maxMarks: testData.maxMarks
-          });
+          };
+          draft.scheduledTests.push(t);
+          newTests.push(t);
         }
       });
       return draft;
     });
     setScheduleTestModalOpen(false);
     addToast("Test(s) scheduled successfully");
+    if (newTests.length > 0) {
+      setNotificationCandidates(newTests);
+      setBulkNotificationType("scheduled_tests");
+    }
   }
 
   function saveSettings(nextSettings) {
@@ -1417,6 +1352,7 @@ function App() {
                 onDeleteNotification={deleteNotificationLog}
                 onEditScore={(test) => setScoreModalOpen(test)}
                 onDeleteScore={deleteTestScore}
+                onSendNotification={setTransientNotification}
               />
             )}
 
@@ -2116,7 +2052,7 @@ function DashboardPage({ appState, data, onNavigate, onOpenStudent }) {
   );
 }
 
-function StudentsPage({ appState, students, selectedStudent, search, setSearch, onAdd, onEdit, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDelete, onOpen, onDeleteNotification, onEditScore, onDeleteScore }) {
+function StudentsPage({ appState, students, selectedStudent, search, setSearch, onAdd, onEdit, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDelete, onOpen, onDeleteNotification, onEditScore, onDeleteScore, onSendNotification }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
       <Panel
@@ -2164,13 +2100,13 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
       </Panel>
 
       <Panel title="Student Profile" icon={FileText}>
-        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} isAdmin={true} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} onEditScore={onEditScore} onDeleteScore={onDeleteScore} /> : <EmptyState label="Select a student to open the full profile." />}
+        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} isAdmin={true} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} onEditScore={onEditScore} onDeleteScore={onDeleteScore} onSendNotification={onSendNotification} /> : <EmptyState label="Select a student to open the full profile." />}
       </Panel>
     </div>
   );
 }
 
-function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification, onEditScore, onDeleteScore }) {
+function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification, onEditScore, onDeleteScore, onSendNotification }) {
   const batch = appState.batches.find((item) => item.id === student.batchId);
   const allFeeRecords = appState.feeRecords.filter((record) => record.studentId === student.id);
   const feeHistory = allFeeRecords
@@ -2212,6 +2148,21 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         <InfoPill label="Admission Date" value={formatDate(student.admissionDate)} />
         <InfoPill label="Fee Plan" value={`${formatCurrency(student.monthlyFeeAmount)} / month`} />
         <InfoPill label="Address" value={student.address} />
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <button
+          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition flex items-center gap-2"
+          onClick={() => onSendNotification(buildTemplatePayload(appState, student, "student_login_credentials", {}))}
+        >
+          <Lock size={16} /> Send Login Credentials
+        </button>
+        <button
+          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition flex items-center gap-2"
+          onClick={() => onSendNotification(buildTemplatePayload(appState, student, "password_reset", {}))}
+        >
+          <RefreshCw size={16} /> Send Password Reset
+        </button>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5">
@@ -2643,6 +2594,8 @@ function FeesPage({ appState, feeGrid, feeFilters, setFeeFilters, onCellClick, o
 
 function LearningPage({ appState, learningView, filter, setFilter, onAddScore, onSaveScore, onScheduleTest, onSendScore, onDeleteGroup, isAdmin, onEditScore, onDeleteScore }) {
   const [selectedTopSubject, setSelectedTopSubject] = useState("");
+  const [showAllTestHistory, setShowAllTestHistory] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
 
   useEffect(() => {
     const subjects = Object.keys(learningView.subjectRankings);
@@ -2888,7 +2841,30 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
           </Panel>
         )}
 
-        <Panel title="Full Test History" icon={FileText}>
+        <Panel 
+          title="Full Test History" 
+          icon={FileText}
+          action={
+            <div className="flex gap-2 items-center">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search student..."
+                  className="rounded-xl border border-slate-200 py-2 pl-9 pr-4 text-sm"
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                />
+              </div>
+              <button
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
+                onClick={() => setShowAllTestHistory(!showAllTestHistory)}
+              >
+                {showAllTestHistory ? "Show Less" : "See All"}
+              </button>
+            </div>
+          }
+        >
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -2903,38 +2879,51 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
                 </tr>
               </thead>
               <tbody>
-                {[...learningView.studentScores].reverse().map((test) => {
-                  const student = appState.students.find((item) => item.id === test.studentId);
-                  if (!student) return null;
-                  return (
-                    <tr key={test.id} className="border-t border-slate-100">
-                      <td className="py-3">{student?.fullName}</td>
-                      <td className="py-3">{test.subject}</td>
-                      <td className="py-3">{test.testName}</td>
-                      <td className="py-3">{formatDate(test.testDate)}</td>
-                      <td className="py-3">
-                        {test.remarks === "Absent on Test Day" ? (
-                          <span className="text-red-600 font-semibold">Absent</span>
-                        ) : (
-                          `${test.marksObtained}/${test.maxMarks}`
-                        )}
-                      </td>
-                      <td className="py-3">{test.grade}</td>
-                      <td className="py-3 flex gap-2">
-                        <button
-                          className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200 transition"
-                          onClick={() =>
-                            onSendScore(
-                              buildScoreNotificationPayload(appState, student, test, appState.settings.templates.scoreReport),
-                            )
-                          }
-                        >
-                          Send WhatsApp
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {(() => {
+                  let history = [...learningView.studentScores].reverse();
+                  if (historySearchQuery) {
+                    const lowerQuery = historySearchQuery.toLowerCase();
+                    history = history.filter(test => {
+                      const student = appState.students.find((item) => item.id === test.studentId);
+                      return student && student.fullName.toLowerCase().includes(lowerQuery);
+                    });
+                  }
+                  if (!showAllTestHistory) {
+                    history = history.slice(0, 10);
+                  }
+                  return history.map((test) => {
+                    const student = appState.students.find((item) => item.id === test.studentId);
+                    if (!student) return null;
+                    return (
+                      <tr key={test.id} className="border-t border-slate-100">
+                        <td className="py-3">{student?.fullName}</td>
+                        <td className="py-3">{test.subject}</td>
+                        <td className="py-3">{test.testName}</td>
+                        <td className="py-3">{formatDate(test.testDate)}</td>
+                        <td className="py-3">
+                          {test.remarks === "Absent on Test Day" ? (
+                            <span className="text-red-600 font-semibold">Absent</span>
+                          ) : (
+                            `${test.marksObtained}/${test.maxMarks}`
+                          )}
+                        </td>
+                        <td className="py-3">{test.grade}</td>
+                        <td className="py-3 flex gap-2">
+                          <button
+                            className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200 transition"
+                            onClick={() =>
+                              onSendScore(
+                                buildTestScorePayload(appState, student, test, test.grade),
+                              )
+                            }
+                          >
+                            Send WhatsApp
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  });
+                })()}
               </tbody>
             </table>
           </div>
@@ -3017,7 +3006,7 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
                       className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700"
                       onClick={() =>
                         onOpenNotification(
-                          buildScoreNotificationPayload(appState, student, test, appState.settings.templates.scoreReport),
+                          buildTestScorePayload(appState, student, test, test.grade),
                         )
                       }
                     >
@@ -3624,7 +3613,7 @@ function BulkNotificationModal({ appState, type, candidates, broadcastConfig, on
 
   return (
     <ModalShell
-      title={type === "fees" ? "Send Fee Reminders to All Defaulters" : type === "broadcast" ? "General Broadcast" : "Send Score Report to Batch"}
+      title={type === "fees" ? "Send Fee Reminders to All Defaulters" : type === "broadcast" ? "General Broadcast" : type === "scheduled_tests" ? "Send Test Schedule to Batch" : "Send Score Report to Batch"}
       onClose={onClose}
       width="max-w-4xl"
     >
@@ -3661,6 +3650,27 @@ function BulkNotificationModal({ appState, type, candidates, broadcastConfig, on
               </button>
             </div>
           ))
+        ) : type === "scheduled_tests" ? (
+          candidates.map((test) => {
+            const student = appState.students.find(s => s.id === test.studentId);
+            if (!student) return null;
+            return (
+              <div key={test.id} className="flex items-center justify-between rounded-2xl border border-slate-200 p-3">
+                <div>
+                  <p className="font-medium">{student.fullName}</p>
+                  <p className="text-sm text-slate-500">
+                    {test.subject} • {test.testName} • {formatDate(test.testDate)}
+                  </p>
+                </div>
+                <button
+                  className="rounded-xl bg-[#1e3a8a] px-3 py-2 text-xs font-semibold text-white"
+                  onClick={() => onOpenNotification(buildTestPrepNotificationPayload(appState, student, test))}
+                >
+                  Open Send Button
+                </button>
+              </div>
+            );
+          })
         ) : (
           groupedBatches.map((item) => (
             <div key={item.batch.id} className="rounded-2xl border border-slate-200 p-4">
@@ -3680,7 +3690,7 @@ function BulkNotificationModal({ appState, type, candidates, broadcastConfig, on
                       <button
                         className="rounded-xl bg-[#1e3a8a] px-3 py-2 text-xs font-semibold text-white"
                         onClick={() =>
-                          onOpenNotification(buildScoreNotificationPayload(appState, student, test, appState.settings.templates.scoreReport))
+                          onOpenNotification(buildTestScorePayload(appState, student, test, test.grade))
                         }
                       >
                         Open Send Button
@@ -3777,19 +3787,6 @@ function buildFeeNotificationPayload(appState, student, record, reminderType) {
   }, { type: reminderType, title: `${reminderType} • ${student.fullName}` });
 }
 
-function buildScoreNotificationPayload(appState, student, test) {
-  // Kept for compatibility, redirects to standard score payload
-  const percent = Math.round((Number(test.marksObtained) / Number(test.maxMarks || 1)) * 100);
-  return buildTemplatePayload(appState, student, "marks_published", {
-    testName: test.testName,
-    subject: test.subject,
-    marks: test.marksObtained,
-    maxMarks: test.maxMarks,
-    percentage: percent,
-    grade: test.grade,
-    remarks: test.remarks,
-  });
-}
 
 function buildBroadcastPayload(appState, student, config) {
   // Fallback to old behavior since broadcast message is provided dynamically by user
