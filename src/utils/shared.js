@@ -8,6 +8,8 @@ export const uid = () =>
 
 export const monthKeyFromDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 
+export const isActiveStudent = (student) => !student.status || student.status === "Active" || student.status === "Inactive";
+
 export function createCycleBoundary(year, monthIndex, dayOfMonth) {
   const lastDay = new Date(year, monthIndex + 1, 0).getDate();
   return new Date(year, monthIndex, Math.min(dayOfMonth, lastDay));

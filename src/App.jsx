@@ -31,6 +31,8 @@ import {
   RefreshCw,
   LogOut,
   PieChart as PieChartIcon,
+  UserMinus,
+  Archive,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -57,7 +59,7 @@ import {
 import { isNative } from "./utils/platform";
 import { StudentProgressPDF } from "./reports/StudentProgressPDF";
 import { generatePDF } from "./utils/generatePDF";
-import { uid, monthKeyFromDate, createCycleBoundary, buildFeeRecord, getGrade, getPerformanceTag } from "./utils/shared";
+import { uid, monthKeyFromDate, createCycleBoundary, buildFeeRecord, getGrade, getPerformanceTag, isActiveStudent } from "./utils/shared";
 import { seedData, defaultSubjects } from "./utils/seedData";
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -112,7 +114,16 @@ function createFeeRecordsForStudent(student) {
   const records = [];
   const admissionDate = new Date(student.admissionDate);
   const start = new Date(admissionDate.getFullYear(), admissionDate.getMonth() + 1, 1);
-  const end = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
+  let end = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
+
+  if (["Dropped", "Completed", "Transferred", "Archived"].includes(student.status) && student.withdrawalDate) {
+    const wDate = new Date(student.withdrawalDate);
+    const wEnd = new Date(wDate.getFullYear(), wDate.getMonth() + 1, 1);
+    if (wEnd < end) {
+      end = wEnd;
+    }
+  }
+
   const cursor = new Date(start);
 
   while (cursor <= end) {
@@ -346,30 +357,48 @@ function openWhatsApp(student, message) {
 function syncStudentFeeRecords(feeRecords, previousStudent, nextStudent) {
   const now = new Date();
 
-  return feeRecords.map((record) => {
-    if (record.studentId !== previousStudent.id || record.transactionType === "OPENING_BALANCE") {
-      return record;
-    }
+  const wDate = nextStudent.withdrawalDate ? new Date(nextStudent.withdrawalDate) : null;
+  const wEnd = wDate ? new Date(wDate.getFullYear(), wDate.getMonth() + 1, 1) : null;
 
-    const dueDate = new Date(record.dueDate);
-    const isCurrentOrFutureMonth =
-      dueDate.getFullYear() > now.getFullYear() ||
-      (dueDate.getFullYear() === now.getFullYear() && dueDate.getMonth() >= now.getMonth());
-    const isEditableStatus = record.status !== "Paid";
+  return feeRecords
+    .filter((record) => {
+      if (record.studentId !== previousStudent.id || record.transactionType === "OPENING_BALANCE") {
+        return true;
+      }
+      
+      if (["Dropped", "Completed", "Transferred", "Archived"].includes(nextStudent.status) && wEnd) {
+        const recordDate = new Date(record.dueDate);
+        const recordMonthStart = new Date(recordDate.getFullYear(), recordDate.getMonth(), 1);
+        if (recordMonthStart > wEnd && record.status !== "Paid" && record.status !== "Partial") {
+          return false;
+        }
+      }
+      return true;
+    })
+    .map((record) => {
+      if (record.studentId !== previousStudent.id || record.transactionType === "OPENING_BALANCE") {
+        return record;
+      }
 
-    if (!isCurrentOrFutureMonth || !isEditableStatus) {
-      return record;
-    }
+      const dueDate = new Date(record.dueDate);
+      const isCurrentOrFutureMonth =
+        dueDate.getFullYear() > now.getFullYear() ||
+        (dueDate.getFullYear() === now.getFullYear() && dueDate.getMonth() >= now.getMonth());
+      const isEditableStatus = record.status !== "Paid";
 
-    const amountDue = Number(nextStudent.monthlyFeeAmount || 0);
-    const amountPaid = Number(record.amountPaid || 0);
-    return {
-      ...record,
-      amountDue,
-      dueDate: createCycleBoundary(dueDate.getFullYear(), dueDate.getMonth(), Number(nextStudent.feeDueDay || 1)).toISOString(),
-      status: amountPaid >= amountDue ? "Paid" : amountPaid > 0 ? "Partial" : "Pending",
-    };
-  });
+      if (!isCurrentOrFutureMonth || !isEditableStatus) {
+        return record;
+      }
+
+      const amountDue = Number(nextStudent.monthlyFeeAmount || 0);
+      const amountPaid = Number(record.amountPaid || 0);
+      return {
+        ...record,
+        amountDue,
+        dueDate: createCycleBoundary(dueDate.getFullYear(), dueDate.getMonth(), Number(nextStudent.feeDueDay || 1)).toISOString(),
+        status: amountPaid >= amountDue ? "Paid" : amountPaid > 0 ? "Partial" : "Pending",
+      };
+    });
 }
 
 
@@ -407,9 +436,12 @@ function App() {
   });
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [parentActiveStudentId, setParentActiveStudentId] = useState("");
+  const [studentSearch, setStudentSearch] = useState("");
+  const [studentFilterStatus, setStudentFilterStatus] = useState("Active");
   const [selectedBatchId, setSelectedBatchId] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [studentFormOpen, setStudentFormOpen] = useState(false);
+  const [withdrawStudentModalOpen, setWithdrawStudentModalOpen] = useState(false);
   const [batchFormOpen, setBatchFormOpen] = useState(false);
   const [paymentModal, setPaymentModal] = useState(null);
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
@@ -421,7 +453,6 @@ function App() {
   const [editingStudent, setEditingStudent] = useState(null);
   const [editingBatch, setEditingBatch] = useState(null);
   const [toasts, setToasts] = useState([]);
-  const [studentSearch, setStudentSearch] = useState("");
   const [studentToPrint, setStudentToPrint] = useState(null);
   const [feeFilters, setFeeFilters] = useState({ batchId: "all", classGrade: "all", monthKey: "all", status: "all" });
   const [learningFilter, setLearningFilter] = useState({ studentId: "", batchId: "all", subject: "all" });
@@ -1157,12 +1188,17 @@ function App() {
   const filteredStudents = useMemo(() => {
     const term = studentSearch.toLowerCase();
     return appState.students.filter(
-      (student) =>
-        student.fullName.toLowerCase().includes(term) ||
-        student.studentId.toLowerCase().includes(term) ||
-        student.classGrade.toLowerCase().includes(term),
+      (student) => {
+        const matchesSearch = student.fullName.toLowerCase().includes(term) ||
+                              student.studentId.toLowerCase().includes(term) ||
+                              student.classGrade.toLowerCase().includes(term);
+        const st = student.status || "Active";
+        const matchesStatus = studentFilterStatus === "All" || 
+          (studentFilterStatus === "Active" ? (st === "Active" || st === "Inactive") : st === studentFilterStatus);
+        return matchesSearch && matchesStatus;
+      }
     );
-  }, [appState.students, studentSearch]);
+  }, [appState.students, studentSearch, studentFilterStatus]);
 
   const filteredFeeGrid = useMemo(() => buildFeeGrid(appState, feeFilters), [appState, feeFilters]);
   const learningView = useMemo(() => buildLearningView(appState, learningFilter), [appState, learningFilter]);
@@ -1336,6 +1372,8 @@ function App() {
                 selectedStudent={selectedStudent}
                 search={studentSearch}
                 setSearch={setStudentSearch}
+                studentFilterStatus={studentFilterStatus}
+                setStudentFilterStatus={setStudentFilterStatus}
                 onAdd={() => {
                   setEditingStudent(null);
                   setStudentFormOpen(true);
@@ -1353,6 +1391,16 @@ function App() {
                 onEditScore={(test) => setScoreModalOpen(test)}
                 onDeleteScore={deleteTestScore}
                 onSendNotification={setTransientNotification}
+                onWithdraw={(student) => {
+                  setEditingStudent(student);
+                  setWithdrawStudentModalOpen(true);
+                }}
+                onArchive={(student) => {
+                  if (window.confirm(`Are you sure you want to archive ${student.fullName}?`)) {
+                    handleStudentSave({ ...student, status: "Archived" });
+                    logNotification(student.id, "System Audit", "Student record archived.");
+                  }
+                }}
               />
             )}
 
@@ -1526,6 +1574,25 @@ function App() {
         />
       )}
 
+      {withdrawStudentModalOpen && (
+        <WithdrawStudentModal
+          student={editingStudent}
+          onClose={() => {
+            setWithdrawStudentModalOpen(false);
+            setEditingStudent(null);
+          }}
+          onSave={(updatedStudent) => {
+            handleStudentSave(updatedStudent);
+            logNotification(
+              updatedStudent.id,
+              "System Audit",
+              `Student Withdrawn on ${updatedStudent.withdrawalDate} due to ${updatedStudent.withdrawalReason || "unspecified reason"}. Notes: ${updatedStudent.withdrawalNotes || "None"}`
+            );
+            setWithdrawStudentModalOpen(false);
+          }}
+        />
+      )}
+
       {batchFormOpen && (
         <BatchFormModal
           initialValue={editingBatch}
@@ -1617,6 +1684,7 @@ function computeDashboard(appState) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
+  const activeStudents = appState.students.filter(s => !s.status || s.status === "Active" || s.status === "Inactive");
   const currentMonthRecords = appState.feeRecords.filter((record) => record.monthKey === currentMonthKey);
   const totalCollected = currentMonthRecords.reduce((sum, record) => sum + Number(record.amountPaid || 0), 0);
   const pendingFees = appState.feeRecords.reduce((sum, record) => {
@@ -1646,7 +1714,7 @@ function computeDashboard(appState) {
     .filter(Boolean)
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
-  const upcomingDueDates = appState.students
+  const upcomingDueDates = activeStudents
     .map((student) => {
       const dueDate = new Date(currentYear, currentMonth, Number(student.feeDueDay || appState.settings.feeDueDay || 1));
       const diff = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
@@ -1695,10 +1763,10 @@ function computeDashboard(appState) {
 
   const batchDistribution = appState.batches.map((batch) => ({
     name: batch.name,
-    value: appState.students.filter((student) => student.batchId === batch.id).length,
+    value: activeStudents.filter((student) => student.batchId === batch.id).length,
   }));
 
-  const topPerformers = appState.students
+  const topPerformers = activeStudents
     .map((student) => {
       const scores = appState.tests.filter((test) => test.studentId === student.id);
       const average = scores.length
@@ -1710,7 +1778,7 @@ function computeDashboard(appState) {
     .slice(0, 5);
 
   return {
-    totalStudents: appState.students.length,
+    totalStudents: activeStudents.length,
     totalCollected,
     pendingFees,
     activeBatches: appState.batches.length,
@@ -2052,7 +2120,7 @@ function DashboardPage({ appState, data, onNavigate, onOpenStudent }) {
   );
 }
 
-function StudentsPage({ appState, students, selectedStudent, search, setSearch, onAdd, onEdit, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDelete, onOpen, onDeleteNotification, onEditScore, onDeleteScore, onSendNotification }) {
+function StudentsPage({ appState, students, selectedStudent, search, setSearch, studentFilterStatus, setStudentFilterStatus, onAdd, onEdit, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDelete, onOpen, onDeleteNotification, onEditScore, onDeleteScore, onSendNotification, onWithdraw, onArchive }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
       <Panel
@@ -2064,6 +2132,18 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
           </button>
         }
       >
+        <div className="mb-4 flex gap-2">
+          {["Active", "Dropped", "Archived", "All"].map((tab) => (
+            <button
+              key={tab}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${studentFilterStatus === tab ? "bg-[#1e3a8a] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              onClick={() => setStudentFilterStatus(tab)}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
         <div className="mb-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
           <Search size={16} className="text-slate-400" />
           <input
@@ -2100,13 +2180,13 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
       </Panel>
 
       <Panel title="Student Profile" icon={FileText}>
-        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} isAdmin={true} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} onEditScore={onEditScore} onDeleteScore={onDeleteScore} onSendNotification={onSendNotification} /> : <EmptyState label="Select a student to open the full profile." />}
+        {selectedStudent ? <StudentProfile student={selectedStudent} appState={appState} isAdmin={true} onExportProgress={onExportProgress} onSendFeesPdf={onSendFeesPdf} onSendProgressPdf={onSendProgressPdf} onDeleteNotification={onDeleteNotification} onEditScore={onEditScore} onDeleteScore={onDeleteScore} onSendNotification={onSendNotification} onWithdraw={onWithdraw} onArchive={onArchive} /> : <EmptyState label="Select a student to open the full profile." />}
       </Panel>
     </div>
   );
 }
 
-function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification, onEditScore, onDeleteScore, onSendNotification }) {
+function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification, onEditScore, onDeleteScore, onSendNotification, onWithdraw, onArchive }) {
   const batch = appState.batches.find((item) => item.id === student.batchId);
   const allFeeRecords = appState.feeRecords.filter((record) => record.studentId === student.id);
   const feeHistory = allFeeRecords
@@ -2145,25 +2225,65 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         <InfoPill label="Student Contact" value={student.contactNumber} />
         <InfoPill label="Parent WhatsApp" value={student.parentWhatsapp} />
         <InfoPill label="Email" value={student.email} />
-        <InfoPill label="Admission Date" value={formatDate(student.admissionDate)} />
         <InfoPill label="Fee Plan" value={`${formatCurrency(student.monthlyFeeAmount)} / month`} />
-        <InfoPill label="Address" value={student.address} />
+        <InfoPill label="Address" value={student.address} className="md:col-span-2" />
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition flex items-center gap-2"
-          onClick={() => onSendNotification(buildTemplatePayload(appState, student, "student_login_credentials", {}))}
-        >
-          <Lock size={16} /> Send Login Credentials
-        </button>
-        <button
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition flex items-center gap-2"
-          onClick={() => onSendNotification(buildTemplatePayload(appState, student, "password_reset", {}))}
-        >
-          <RefreshCw size={16} /> Send Password Reset
-        </button>
+      <div className="rounded-3xl border border-slate-200 bg-white p-5">
+        <h4 className="text-lg font-bold text-slate-800 mb-4">Enrollment Status</h4>
+        <div className="grid gap-3 md:grid-cols-2">
+          <InfoPill label="Status" value={<span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${student.status === 'Dropped' ? 'bg-red-100 text-red-800' : student.status === 'Archived' ? 'bg-slate-200 text-slate-700' : 'bg-emerald-100 text-emerald-800'}`}>{student.status || 'Active'}</span>} />
+          <InfoPill label="Admission Date" value={formatDate(student.admissionDate)} />
+          {student.withdrawalDate && (
+            <>
+              <InfoPill label="Withdrawal Date" value={formatDate(student.withdrawalDate)} />
+              <InfoPill label="Reason" value={student.withdrawalReason || "Not specified"} />
+              {student.withdrawalNotes && <InfoPill label="Notes" value={student.withdrawalNotes} className="md:col-span-2" />}
+            </>
+          )}
+        </div>
       </div>
+
+      {isAdmin && (
+        <div className="flex flex-wrap gap-3">
+          {(!student.status || student.status === "Active" || student.status === "Inactive") && (
+            <button
+              className="rounded-xl border border-slate-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 transition flex items-center gap-2"
+              onClick={() => onWithdraw(student)}
+            >
+              <UserMinus size={16} /> Withdraw Student
+            </button>
+          )}
+          {["Dropped", "Completed", "Transferred"].includes(student.status) && (() => {
+            const previousBalance = allFeeRecords.filter(r => r.transactionType === "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
+            const pastRecords = allFeeRecords.filter(r => r.status === "Paid" || r.status === "Partial" || isOverdueFeeRecord(r));
+            const generatedMonthlyDues = pastRecords.filter(r => r.transactionType !== "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
+            const paymentsReceived = allFeeRecords.reduce((sum, r) => sum + (Number(r.amountPaid) || 0), 0);
+            const currentOutstanding = Math.max(0, previousBalance + generatedMonthlyDues - paymentsReceived);
+            
+            return currentOutstanding === 0 && (
+              <button
+                className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 transition flex items-center gap-2"
+                onClick={() => onArchive(student)}
+              >
+                <Archive size={16} /> Archive Student
+              </button>
+            );
+          })()}
+          <button
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition flex items-center gap-2"
+            onClick={() => onSendNotification(buildTemplatePayload(appState, student, "student_login_credentials", {}))}
+          >
+            <Lock size={16} /> Send Login Credentials
+          </button>
+          <button
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition flex items-center gap-2"
+            onClick={() => onSendNotification(buildTemplatePayload(appState, student, "password_reset", {}))}
+          >
+            <RefreshCw size={16} /> Send Password Reset
+          </button>
+        </div>
+      )}
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5">
         <h4 className="text-lg font-bold text-slate-800 mb-4">Fee Summary</h4>
@@ -2387,7 +2507,7 @@ function BatchesPage({ appState, selectedBatch, onAdd, onEdit, onDelete, onOpen,
       >
         <div className="grid gap-4 md:grid-cols-2">
           {appState.batches.map((batch) => {
-            const enrolled = appState.students.filter((student) => student.batchId === batch.id).length;
+            const enrolled = appState.students.filter((student) => student.batchId === batch.id && isActiveStudent(student)).length;
             const occupancy = batch.maxStudents ? Math.round((enrolled / batch.maxStudents) * 100) : 0;
             const tone = occupancy > 90 ? "bg-red-500" : occupancy >= 70 ? "bg-amber-500" : "bg-emerald-500";
             return (
@@ -2425,7 +2545,7 @@ function BatchesPage({ appState, selectedBatch, onAdd, onEdit, onDelete, onOpen,
         {selectedBatch ? (
           <div className="space-y-3">
             {appState.students
-              .filter((student) => student.batchId === selectedBatch.id)
+              .filter((student) => student.batchId === selectedBatch.id && isActiveStudent(student))
               .map((student) => (
                 <button
                   key={student.id}
@@ -3165,8 +3285,8 @@ function ScheduleTestModal({ appState, onClose, onSave }) {
 
   const filteredStudents = useMemo(() => {
     return form.batchId === "all"
-      ? appState.students
-      : appState.students.filter((s) => s.batchId === form.batchId);
+      ? appState.students.filter(isActiveStudent)
+      : appState.students.filter((s) => s.batchId === form.batchId && isActiveStudent(s));
   }, [form.batchId, appState.students]);
 
   useEffect(() => {
@@ -3275,6 +3395,58 @@ function TransientNotificationModal({ payload, onClose, onSent }) {
             <SendIcon size={14} /> Send via WhatsApp
           </a>
         </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function WithdrawStudentModal({ student, onClose, onSave }) {
+  const [form, setForm] = useState({
+    withdrawalDate: new Date().toISOString().slice(0, 10),
+    withdrawalReason: "",
+    withdrawalNotes: "",
+  });
+
+  return (
+    <ModalShell title={`Withdraw Student: ${student.fullName}`} onClose={onClose}>
+      <div className="space-y-4">
+        <InputField label="Withdrawal Date" type="date" value={form.withdrawalDate} onChange={(value) => setForm((prev) => ({ ...prev, withdrawalDate: value }))} />
+        <SelectField
+          label="Reason for Leaving"
+          value={form.withdrawalReason}
+          onChange={(value) => setForm((prev) => ({ ...prev, withdrawalReason: value }))}
+          options={[
+            { value: "", label: "Select Reason (Optional)" },
+            { value: "Joined Another Coaching", label: "Joined Another Coaching" },
+            { value: "Relocated", label: "Relocated" },
+            { value: "Financial Reasons", label: "Financial Reasons" },
+            { value: "Personal Reasons", label: "Personal Reasons" },
+            { value: "Course Completed", label: "Course Completed" },
+            { value: "Other", label: "Other" }
+          ]}
+        />
+        <div>
+          <label className="mb-2 block text-sm font-medium text-slate-700">Notes (Optional)</label>
+          <textarea
+            className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a]"
+            rows="3"
+            value={form.withdrawalNotes}
+            onChange={(e) => setForm((prev) => ({ ...prev, withdrawalNotes: e.target.value }))}
+            placeholder="Any additional context..."
+          ></textarea>
+        </div>
+      </div>
+      <div className="mt-6 flex justify-end gap-3">
+        <button className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          onClick={() => onSave({ ...student, status: "Dropped", ...form })}
+          disabled={!form.withdrawalDate}
+        >
+          Confirm Withdrawal
+        </button>
       </div>
     </ModalShell>
   );
