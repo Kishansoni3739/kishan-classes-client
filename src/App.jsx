@@ -33,10 +33,13 @@ import {
   PieChart as PieChartIcon,
   UserMinus,
   Archive,
+  MessageCircle,
+  Send,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { getAllVisibleFeeRecords, getCompletedFeeTenures, formatFeeTenure, getFeeTenureDates, isOverdueFeeRecord } from "../../shared/feeVisibility.js";
 import { Capacitor } from "@capacitor/core";
 import { Filesystem, Directory } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
@@ -93,20 +96,7 @@ const formatShortDate = (value) =>
   value ? new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short" }).format(new Date(value)) : "-";
 const subjectColors = ["#1e3a8a", "#2563eb", "#0ea5e9", "#14b8a6", "#f59e0b", "#ef4444", "#8b5cf6", "#10b981"];
 
-function getFeeTenure(record, student) {
-  if (record?.transactionType === "OPENING_BALANCE") {
-    return { label: "Previous Outstanding Balance", startDate: null, endDate: null };
-  }
-  const dueDate = record?.dueDate ? new Date(record.dueDate) : new Date(`${record.monthKey}-01T00:00:00`);
-  const dueDay = Number(student?.feeDueDay || dueDate.getDate() || 1);
-  const startDate = createCycleBoundary(dueDate.getFullYear(), dueDate.getMonth() - 1, dueDay);
-  const endDate = createCycleBoundary(dueDate.getFullYear(), dueDate.getMonth(), dueDay);
-  return {
-    startDate,
-    endDate,
-    label: `${formatShortDate(startDate)} - ${formatShortDate(endDate)}`,
-  };
-}
+
 
 
 
@@ -141,9 +131,6 @@ function getFirstPayableMonthKey(student) {
   return monthKeyFromDate(firstPayableDate);
 }
 
-function isOverdueFeeRecord(record, now = new Date()) {
-  return record.status !== "Paid" && !!record.dueDate && new Date(record.dueDate) < now;
-}
 
 function getOverdueFeeRows(appState, now = new Date()) {
   return appState.feeRecords
@@ -156,7 +143,7 @@ function getOverdueFeeRows(appState, now = new Date()) {
         student,
         batch,
         balance: Math.max(0, Number(record.amountDue || 0) - Number(record.amountPaid || 0)),
-        tenureLabel: student ? getFeeTenure(record, student).label : record.monthKey,
+        tenureLabel: student ? formatFeeTenure(getFeeTenureDates(record, student).startDate, getFeeTenureDates(record, student).endDate) : record.monthKey,
       };
     })
     .filter((item) => item.student)
@@ -253,7 +240,7 @@ function buildStudentProgressSummary(student, appState, reportMonth = null) {
     const firstPercent = Math.round((subjectTests[0].marksObtained / subjectTests[0].maxMarks) * 100);
     const latestPercent = Math.round((subjectTests.at(-1).marksObtained / subjectTests.at(-1).maxMarks) * 100);
     const averagePercent = Math.round(
-      subjectTests.reduce((sum, test) => sum + (test.marksObtained / test.maxMarks) * 100, 0) / subjectTests.length,
+      calculateAverageScore(subjectTests),
     );
     return {
       subject,
@@ -266,7 +253,7 @@ function buildStudentProgressSummary(student, appState, reportMonth = null) {
   });
 
   const overallAverage = tests.length
-    ? Math.round(tests.reduce((sum, test) => sum + (test.marksObtained / test.maxMarks) * 100, 0) / tests.length)
+    ? Math.round(calculateAverageScore(tests))
     : 0;
   const latestTest = tests.at(-1) || null;
   const strongest = [...subjectStats].sort((a, b) => b.averagePercent - a.averagePercent)[0] || null;
@@ -423,6 +410,61 @@ function generateStudentId(index, year) {
   return `CC-${year}-${String(index).padStart(3, "0")}`;
 }
 
+// ─────────────────────────────────────────────────────────
+// DRY Helpers
+// ─────────────────────────────────────────────────────────
+
+function calculateTestPercentage(test) {
+  if (!test || !test.maxMarks) return 0;
+  return (Number(test.marksObtained) / Number(test.maxMarks)) * 100;
+}
+
+function calculateAverageScore(tests) {
+  if (!tests || tests.length === 0) return 0;
+  const totalPercent = tests.reduce((sum, test) => sum + calculateTestPercentage(test), 0);
+  return totalPercent / tests.length;
+}
+
+export function calculateFeeSummary(feeRecords, isOverdueFeeRecord) {
+  const previousBalance = feeRecords.filter(r => r.transactionType === "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
+  const generatedMonthlyDues = feeRecords.filter(r => r.transactionType !== "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
+  const paymentsReceived = feeRecords.reduce((sum, r) => sum + (Number(r.amountPaid) || 0), 0);
+  const currentOutstanding = Math.max(0, previousBalance + generatedMonthlyDues - paymentsReceived);
+  
+  return { previousBalance, generatedMonthlyDues, paymentsReceived, currentOutstanding };
+}
+
+async function apiFetch(endpoint, options = {}) {
+  const headers = { ...options.headers };
+  const token = localStorage.getItem("token");
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (!options.body || typeof options.body === "string") {
+    headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  }
+  const timeout = options.timeout || 15000;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, { 
+      ...options, 
+      headers,
+      signal: controller.signal 
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    if (error.name === 'AbortError') {
+      throw new Error("Request timed out. Please check your internet connection or try again.");
+    }
+    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+      throw new Error("Network error. You might be offline or the server is unreachable.");
+    }
+    throw error;
+  }
+}
+
 function App() {
   const [appState, setAppState] = useState(seedData);
   const [activePage, setActivePage] = useState(() => {
@@ -546,13 +588,14 @@ function App() {
     }, 3200);
   }, []);
 
-  const dashboardData = useMemo(() => computeDashboard(appState), [appState]);
+  const visibleFeeRecords = useMemo(() => getAllVisibleFeeRecords(appState.feeRecords), [appState.feeRecords]);
+  const dashboardData = useMemo(() => computeDashboard({ ...appState, feeRecords: visibleFeeRecords }), [appState, visibleFeeRecords]);
   const pendingStudents = useMemo(
     () =>
       appState.students.filter((student) =>
-        appState.feeRecords.some((record) => record.studentId === student.id && record.status !== "Paid"),
+        visibleFeeRecords.some((record) => record.studentId === student.id && record.computedStatus !== "Paid" && record.computedStatus !== "Upcoming"),
       ),
-    [appState],
+    [appState.students, visibleFeeRecords],
   );
 
   const selectedStudent = appState.students.find((student) => student.id === selectedStudentId) ?? null;
@@ -562,10 +605,10 @@ function App() {
     if (!authToken) return;
     setIsRefreshing(true);
     try {
-      const response = await fetch(STATE_API_URL, { headers: fetchHeaders });
+      const response = await apiFetch('/api/state', { headers: fetchHeaders, timeout: 30000 });
       let templatesRes = null;
       if (isAdmin) {
-        templatesRes = await fetch(`${API_BASE_URL}/api/message-templates`, { headers: fetchHeaders });
+        templatesRes = await apiFetch('/api/message-templates', { headers: fetchHeaders, timeout: 15000 });
       }
       
       if (!response.ok) {
@@ -681,10 +724,11 @@ function App() {
     saveQueueRef.current = saveQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        const response = await fetch(STATE_API_URL, {
+        const response = await apiFetch('/api/state', {
           method: "PUT",
           headers: { "Content-Type": "application/json", ...fetchHeaders },
           body: JSON.stringify(nextState),
+          timeout: 20000
         });
 
         if (!response.ok) {
@@ -751,9 +795,23 @@ function App() {
           });
         }
       } else {
+        const currentYear = new Date().getFullYear();
+        let maxIndex = 0;
+        draft.students.forEach(s => {
+          if (s.studentId && s.studentId.startsWith(`CC-${currentYear}-`)) {
+            const parts = s.studentId.split('-');
+            if (parts.length === 3) {
+              const idx = parseInt(parts[2], 10);
+              if (!isNaN(idx) && idx > maxIndex) {
+                maxIndex = idx;
+              }
+            }
+          }
+        });
+
         const student = {
           id: uid(),
-          studentId: generateStudentId(draft.students.length + 1, new Date().getFullYear()),
+          studentId: generateStudentId(maxIndex + 1, currentYear),
           ...studentData,
         };
         draft.students.push(student);
@@ -784,9 +842,7 @@ function App() {
 
     // Trigger transient (non-persisted) WhatsApp notification to parent
     if (savedStudent && savedStudent.parentWhatsapp) {
-      if (isEditing) {
-        setTransientNotification(buildProfileUpdatedPayload(latestStateRef.current, savedStudent));
-      } else {
+      if (!isEditing) {
         setTransientNotification(buildNewEnrollmentPayload(latestStateRef.current, savedStudent));
       }
     }
@@ -1193,8 +1249,7 @@ function App() {
                               student.studentId.toLowerCase().includes(term) ||
                               student.classGrade.toLowerCase().includes(term);
         const st = student.status || "Active";
-        const matchesStatus = studentFilterStatus === "All" || 
-          (studentFilterStatus === "Active" ? (st === "Active" || st === "Inactive") : st === studentFilterStatus);
+        const matchesStatus = studentFilterStatus === "All" || st === studentFilterStatus;
         return matchesSearch && matchesStatus;
       }
     );
@@ -1684,29 +1739,36 @@ function computeDashboard(appState) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
-  const activeStudents = appState.students.filter(s => !s.status || s.status === "Active" || s.status === "Inactive");
+  const activeStudents = appState.students.filter(s => !s.status || s.status === "Active");
   const currentMonthRecords = appState.feeRecords.filter((record) => record.monthKey === currentMonthKey);
   const totalCollected = currentMonthRecords.reduce((sum, record) => sum + Number(record.amountPaid || 0), 0);
-  const pendingFees = appState.feeRecords.reduce((sum, record) => {
-    if (record.monthKey <= currentMonthKey && record.status !== "Paid") {
+  const allVisibleRecords = getAllVisibleFeeRecords(appState.feeRecords, appState.students);
+  
+  const pendingFees = allVisibleRecords.reduce((sum, record) => {
+    if (record.status !== "Paid") {
       return sum + Math.max(0, Number(record.amountDue || 0) - Number(record.amountPaid || 0));
     }
     return sum;
   }, 0);
-  const studentsWithPending = appState.students
-    .map((student) => {
-      const overdueRecords = appState.feeRecords
-        .filter((record) => record.studentId === student.id && isOverdueFeeRecord(record, now))
-        .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-      if (!overdueRecords.length) return null;
-      const oldest = overdueRecords[0];
-      const totalDue = overdueRecords.reduce(
-        (sum, record) => sum + Math.max(0, Number(record.amountDue || 0) - Number(record.amountPaid || 0)),
-        0,
-      );
+
+  const pendingMap = {};
+  allVisibleRecords.forEach(record => {
+    if (record.status !== "Paid" && record.transactionType !== "OPENING_BALANCE") {
+      if (!pendingMap[record.studentId]) pendingMap[record.studentId] = [];
+      pendingMap[record.studentId].push(record);
+    }
+  });
+
+  const studentsWithPending = Object.entries(pendingMap)
+    .map(([studentId, records]) => {
+      const student = appState.students.find(s => s.id === studentId);
+      if (!student) return null;
+      records.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+      const oldest = records[0];
+      const totalDue = records.reduce((sum, r) => sum + Math.max(0, Number(r.amountDue || 0) - Number(r.amountPaid || 0)), 0);
       return {
         ...oldest,
-        overdueCount: overdueRecords.length,
+        overdueCount: records.length,
         totalDue,
         student,
       };
@@ -1742,7 +1804,7 @@ function computeDashboard(appState) {
         diff,
       };
     })
-    .filter((item) => item.diff >= 0 && item.diff <= 7 && item.status !== "Paid")
+    .filter((item) => item.diff >= 0 && item.diff <= 7 && item.computedStatus !== "Paid" && item.computedStatus !== "Upcoming")
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
   const recentScores = [...appState.tests]
@@ -1770,7 +1832,7 @@ function computeDashboard(appState) {
     .map((student) => {
       const scores = appState.tests.filter((test) => test.studentId === student.id);
       const average = scores.length
-        ? scores.reduce((sum, test) => sum + (test.marksObtained / test.maxMarks) * 100, 0) / scores.length
+        ? calculateAverageScore(scores)
         : 0;
       return { student, average };
     })
@@ -1805,7 +1867,7 @@ function buildFeeGrid(appState, filters) {
             studentId: student.id,
             monthKey,
             monthLabel: label,
-            tenureLabel: "",
+            tenureLabel: "N/A",
             amountDue: 0,
             amountPaid: 0,
             dueDate: "",
@@ -1822,13 +1884,22 @@ function buildFeeGrid(appState, filters) {
             monthKey,
             amountDue: student.monthlyFeeAmount,
             amountPaid: 0,
-            dueDate: createCycleBoundary(new Date().getFullYear(), index, Number(student.feeDueDay || 1)).toISOString(),
+            dueDate: (() => {
+              const [mYear, mMonth] = monthKey.split("-");
+              return createCycleBoundary(Number(mYear), Number(mMonth) - 1, Number(student.feeDueDay || 1)).toISOString();
+            })(),
             paymentDate: "",
             mode: "",
             remarks: "",
             status: "Pending",
           };
-        return { ...record, monthLabel: label, tenureLabel: getFeeTenure(record, student).label };
+        const dates = getFeeTenureDates(record, student);
+        let computedStatus = record.status;
+        if (new Date() < dates.startDate && record.status === "Pending") {
+          computedStatus = "Upcoming";
+        }
+        const tenureLabelStr = formatFeeTenure(dates.startDate, dates.endDate);
+        return { ...record, status: computedStatus, monthLabel: tenureLabelStr, tenureLabel: tenureLabelStr };
       });
       return { student, cells };
     });
@@ -1843,36 +1914,35 @@ function buildFeeGrid(appState, filters) {
     );
   });
 
-  const currentMonthKey = monthKeyFromDate(new Date());
+  const allVisibleRecords = getAllVisibleFeeRecords(appState.feeRecords, appState.students);
+  
+  const totals = appState.feeRecords.reduce((acc, record) => {
+    acc.collected += Number(record.amountPaid || 0);
+    return acc;
+  }, { collected: 0, due: 0, pending: 0 });
 
-  const totals = appState.feeRecords.reduce(
-    (acc, record) => {
-      acc.collected += Number(record.amountPaid || 0);
+  allVisibleRecords.forEach(record => {
+    totals.due += Number(record.amountDue || 0);
+    if (record.status !== "Paid") {
+      totals.pending += Math.max(0, Number(record.amountDue || 0) - Number(record.amountPaid || 0));
+    }
+  });
 
-      // Calculate due and pending ONLY up to the current month to avoid including future bills
-      if (record.monthKey <= currentMonthKey) {
-        acc.due += Number(record.amountDue || 0);
-        if (record.status !== "Paid") {
-          acc.pending += Math.max(0, Number(record.amountDue || 0) - Number(record.amountPaid || 0));
-        }
-      }
-      return acc;
-    },
-    { collected: 0, due: 0, pending: 0 },
-  );
+  const pendingMap = {};
+  allVisibleRecords.forEach(record => {
+    if (record.status !== "Paid" && record.transactionType !== "OPENING_BALANCE") {
+      if (!pendingMap[record.studentId]) pendingMap[record.studentId] = 0;
+      pendingMap[record.studentId]++;
+    }
+  });
 
-  const defaulters = appState.students
-    .map((student) => {
-      const firstPayableMonthKey = getFirstPayableMonthKey(student);
-      const pendingCount = appState.feeRecords.filter(
-        (record) =>
-          record.studentId === student.id &&
-          isOverdueFeeRecord(record) &&
-          (!firstPayableMonthKey || record.monthKey >= firstPayableMonthKey),
-      ).length;
+  const defaulters = Object.entries(pendingMap)
+    .map(([studentId, pendingCount]) => {
+      const student = appState.students.find(s => s.id === studentId);
       return { student, pendingCount };
     })
-    .filter((item) => item.pendingCount >= 2);
+    .filter(item => item.student && item.pendingCount >= 2);
+
 
   return { rows: filteredRows, totals, defaulters };
 }
@@ -1937,7 +2007,7 @@ function buildLearningView(appState, filter) {
       .map((student) => {
         const tests = appState.tests.filter((test) => test.studentId === student.id && test.subject === subject);
         if (!tests.length) return null;
-        const average = tests.reduce((sum, test) => sum + (test.marksObtained / test.maxMarks) * 100, 0) / tests.length;
+        const average = calculateAverageScore(tests);
         return { name: student.fullName, average: Math.round(average) };
       })
       .filter(Boolean)
@@ -1961,7 +2031,7 @@ function buildLearningView(appState, filter) {
 function buildNotificationCandidates(appState) {
   const today = new Date();
   return appState.feeRecords
-    .filter((record) => record.status !== "Paid")
+    .filter((record) => record.computedStatus !== "Paid" && record.computedStatus !== "Upcoming")
     .map((record) => {
       const student = appState.students.find((item) => item.id === record.studentId);
       if (!student) return null;
@@ -2133,7 +2203,7 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
         }
       >
         <div className="mb-4 flex gap-2">
-          {["Active", "Dropped", "Archived", "All"].map((tab) => (
+          {["Active", "Inactive", "Dropped", "Archived", "All"].map((tab) => (
             <button
               key={tab}
               className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${studentFilterStatus === tab ? "bg-[#1e3a8a] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
@@ -2188,10 +2258,9 @@ function StudentsPage({ appState, students, selectedStudent, search, setSearch, 
 
 function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFeesPdf, onSendProgressPdf, onDeleteNotification, onEditScore, onDeleteScore, onSendNotification, onWithdraw, onArchive }) {
   const batch = appState.batches.find((item) => item.id === student.batchId);
-  const allFeeRecords = appState.feeRecords.filter((record) => record.studentId === student.id);
-  const feeHistory = allFeeRecords
-    .filter((record) => record.status !== "Pending" || isOverdueFeeRecord(record))
-    .sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
+  const rawFeeRecords = appState.feeRecords.filter((record) => record.studentId === student.id);
+  const allFeeRecords = getCompletedFeeTenures(rawFeeRecords, student);
+  const feeHistory = [...allFeeRecords].sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
   const tests = appState.tests.filter((test) => test.studentId === student.id).sort((a, b) => new Date(b.testDate) - new Date(a.testDate));
   const notifications = appState.notificationLogs.filter((log) => log.studentId === student.id);
   const [tab, setTab] = useState("fees");
@@ -2244,9 +2313,40 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         </div>
       </div>
 
+      <div className="rounded-3xl border border-slate-200 bg-white p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2"><MessageCircle size={20} className="text-[#1e3a8a]"/> Telegram Notifications</h4>
+        </div>
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between">
+          <div className="mb-4 sm:mb-0">
+            <p className="font-semibold text-slate-800">Telegram Account</p>
+            <p className="text-sm text-slate-500">{student.telegramParentChatId ? "Connected ✅" : "Not connected ❌"}</p>
+          </div>
+          {!student.telegramParentChatId && (
+            <button 
+              onClick={async () => {
+                try {
+                  const res = await fetch(`${API_BASE_URL}/api/telegram/link-token?type=parent`, {
+                    headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+                  });
+                  const data = await res.json();
+                  if (data.linkUrl) window.open(data.linkUrl, '_blank');
+                  else alert(data.error || "Failed to generate link");
+                } catch (err) {
+                  alert("Error connecting to Telegram");
+                }
+              }}
+              className="rounded-xl bg-[#229ED9] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#1C8BBE]"
+            >
+              Connect Telegram (Parent Contact)
+            </button>
+          )}
+        </div>
+      </div>
+
       {isAdmin && (
         <div className="flex flex-wrap gap-3">
-          {(!student.status || student.status === "Active" || student.status === "Inactive") && (
+          {(!student.status || student.status === "Active") && (
             <button
               className="rounded-xl border border-slate-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 transition flex items-center gap-2"
               onClick={() => onWithdraw(student)}
@@ -2255,11 +2355,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
             </button>
           )}
           {["Dropped", "Completed", "Transferred"].includes(student.status) && (() => {
-            const previousBalance = allFeeRecords.filter(r => r.transactionType === "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
-            const pastRecords = allFeeRecords.filter(r => r.status === "Paid" || r.status === "Partial" || isOverdueFeeRecord(r));
-            const generatedMonthlyDues = pastRecords.filter(r => r.transactionType !== "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
-            const paymentsReceived = allFeeRecords.reduce((sum, r) => sum + (Number(r.amountPaid) || 0), 0);
-            const currentOutstanding = Math.max(0, previousBalance + generatedMonthlyDues - paymentsReceived);
+            const { currentOutstanding } = calculateFeeSummary(allFeeRecords, isOverdueFeeRecord);
             
             return currentOutstanding === 0 && (
               <button
@@ -2289,11 +2385,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         <h4 className="text-lg font-bold text-slate-800 mb-4">Fee Summary</h4>
         <div className="grid gap-4 md:grid-cols-4">
           {(() => {
-            const pastRecords = allFeeRecords.filter(r => r.status === "Paid" || r.status === "Partial" || isOverdueFeeRecord(r));
-            const generatedMonthlyDues = pastRecords.filter(r => r.transactionType !== "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
-            const previousBalance = allFeeRecords.filter(r => r.transactionType === "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
-            const paymentsReceived = allFeeRecords.reduce((sum, r) => sum + (Number(r.amountPaid) || 0), 0);
-            const currentOutstanding = Math.max(0, previousBalance + generatedMonthlyDues - paymentsReceived);
+            const { previousBalance, generatedMonthlyDues, paymentsReceived, currentOutstanding } = calculateFeeSummary(allFeeRecords, isOverdueFeeRecord);
             
             return (
               <>
@@ -2370,7 +2462,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
           {feeHistory.map((record) => (
             <div key={record.id} className="rounded-2xl border border-slate-200 p-3">
               <div className="flex items-center justify-between">
-                <p className="font-medium">{record.monthKey}</p>
+                <p className="font-medium">{record.tenureLabel}</p>
                 <StatusBadge status={record.status} />
               </div>
               <p className="mt-2 text-sm text-slate-600">
@@ -3057,6 +3149,41 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
   const [templates, setTemplates] = useState(appState.settings.templates);
   const [broadcastSubject, setBroadcastSubject] = useState("");
   const [broadcastMessage, setBroadcastMessage] = useState("");
+  
+  const [telegramAudience, setTelegramAudience] = useState("all");
+  const [telegramBatch, setTelegramBatch] = useState("all");
+  const [telegramMessage, setTelegramMessage] = useState("");
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+
+  const handleTelegramBroadcast = async () => {
+    setIsBroadcasting(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/telegram/broadcast`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("token")}`
+        },
+        body: JSON.stringify({
+          audience: telegramAudience,
+          batchId: telegramAudience === "batch" ? telegramBatch : undefined,
+          message: telegramMessage
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        alert(`Broadcast sent successfully!\nSent: ${data.result.sent}\nFailed: ${data.result.failed}`);
+        setTelegramMessage("");
+      } else {
+        alert(data.error || "Broadcast failed");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error sending broadcast");
+    } finally {
+      setIsBroadcasting(false);
+    }
+  };
 
   useEffect(() => {
     setTemplates(appState.settings.templates);
@@ -3160,6 +3287,53 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
               onClick={() => onBulk("broadcast", { subject: broadcastSubject, message: broadcastMessage })}
             >
               Prepare Broadcast for All Students
+            </button>
+          </div>
+        </div>
+      </Panel>
+      <Panel title="Telegram Broadcast" icon={MessageCircle}>
+        <div className="grid gap-4">
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">Audience</label>
+              <select 
+                className="w-full rounded-xl border border-slate-200 px-4 py-2 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a]"
+                value={telegramAudience}
+                onChange={e => setTelegramAudience(e.target.value)}
+              >
+                <option value="all">All Connected (Students & Parents)</option>
+                <option value="all_students">All Connected Students</option>
+                <option value="all_parents">All Connected Parents</option>
+                <option value="batch">Specific Batch</option>
+              </select>
+            </div>
+            {telegramAudience === "batch" && (
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">Batch</label>
+                <select 
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a]"
+                  value={telegramBatch}
+                  onChange={e => setTelegramBatch(e.target.value)}
+                >
+                  <option value="all">Select Batch</option>
+                  {appState.batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+          <TextAreaField
+            label="Telegram Message"
+            value={telegramMessage}
+            onChange={setTelegramMessage}
+            placeholder="Type your message here... Markdown is supported (*bold*, _italic_)"
+          />
+          <div>
+            <button
+              className="rounded-xl bg-[#229ED9] px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2"
+              disabled={!telegramMessage.trim() || isBroadcasting}
+              onClick={handleTelegramBroadcast}
+            >
+              <Send size={16} /> {isBroadcasting ? "Sending..." : "Send Telegram Broadcast"}
             </button>
           </div>
         </div>
@@ -3480,6 +3654,7 @@ function StudentFormModal({ appState, initialValue, onClose, onSave, isAdmin }) 
       discount: 0,
       feeDueDay: defaultFeeDueDay,
       openingBalance: 0,
+      status: "Active",
     },
   );
 
@@ -3527,6 +3702,18 @@ function StudentFormModal({ appState, initialValue, onClose, onSave, isAdmin }) 
           value={form.batchId}
           onChange={(value) => setForm((prev) => ({ ...prev, batchId: value }))}
           options={appState.batches.map((batch) => ({ value: batch.id, label: batch.name }))}
+        />
+        <SelectField
+          label="Enrollment Status"
+          value={form.status || "Active"}
+          onChange={(value) => setForm((prev) => ({ ...prev, status: value }))}
+          options={[
+            { value: "Active", label: "Active" },
+            { value: "Inactive", label: "Inactive" },
+            { value: "Dropped", label: "Dropped" },
+            { value: "Completed", label: "Completed" },
+            { value: "Transferred", label: "Transferred" }
+          ]}
         />
         <InputField label="Total Course Fee" type="number" value={form.totalCourseFee} onChange={(value) => setForm((prev) => ({ ...prev, totalCourseFee: Number(value) }))} />
         <InputField label="Monthly Fee Amount" type="number" value={form.monthlyFeeAmount} onChange={(value) => setForm((prev) => ({ ...prev, monthlyFeeAmount: Number(value) }))} />
@@ -3659,7 +3846,8 @@ function BatchFormModal({ initialValue, onClose, onSave }) {
 
 function PaymentModal({ record, student, onClose, onSave }) {
   const [form, setForm] = useState(record);
-  const tenure = getFeeTenure(record, student);
+  const dates = getFeeTenureDates(record, student);
+  const tenureLabel = formatFeeTenure(dates.startDate, dates.endDate);
 
   return (
     <ModalShell title={`Update Payment • ${student?.fullName || "Student"}`} onClose={onClose}>
@@ -3905,9 +4093,6 @@ function buildTemplatePayload(appState, student, templateKey, data, payloadOverr
   };
 }
 
-function buildProfileUpdatedPayload(appState, student) {
-  return buildTemplatePayload(appState, student, "profile_updated", {});
-}
 
 function buildNewEnrollmentPayload(appState, student) {
   return buildTemplatePayload(appState, student, "new_student_admission", {
@@ -3929,9 +4114,10 @@ function buildTestScorePayload(appState, student, score, grade) {
 }
 
 function buildFeePaymentUpdatePayload(appState, student, payment, status) {
-  const monthLabel = months[Number((payment.monthKey || "").slice(5, 7)) - 1] || payment.monthKey;
+  const dates = getFeeTenureDates(payment, student);
+  const tenureLabelStr = formatFeeTenure(dates.startDate, dates.endDate) || payment.monthKey;
   return buildTemplatePayload(appState, student, "payment_confirmation", {
-    month: monthLabel,
+    month: tenureLabelStr,
     paymentAmount: payment.amountPaid,
     mode: payment.mode,
   });
@@ -3951,11 +4137,15 @@ function buildFeeNotificationPayload(appState, student, record, reminderType) {
   if (reminderType === "Overdue Notice" || reminderType === "Final Notice") {
     templateKey = "fee_overdue_reminder";
   }
+  
+  const allFeeRecords = getCompletedFeeTenures(appState.feeRecords, student);
+  const { currentOutstanding } = calculateFeeSummary(allFeeRecords, isOverdueFeeRecord);
+
   return buildTemplatePayload(appState, student, templateKey, {
     dueAmount: record.amountDue - record.amountPaid,
-    totalOutstanding: record.amountDue - record.amountPaid, // Could be improved if we calculate full outstanding
+    totalOutstanding: currentOutstanding,
     dueDate: formatDate(record.dueDate),
-    month: months[Number(record.monthKey.slice(5, 7)) - 1],
+    month: record.tenureLabel || record.monthKey,
   }, { type: reminderType, title: `${reminderType} • ${student.fullName}` });
 }
 
@@ -4262,7 +4452,7 @@ function MessageTemplatesPage({ appState, onSave, onReset, onPreview, onBack }) 
   const channels = [
     { id: "whatsapp", label: "WhatsApp" },
     { id: "sms", label: "SMS (Coming Soon)" },
-    { id: "email", label: "Email (Coming Soon)" },
+    { id: "telegram", label: "Telegram Notifications" },
   ];
 
   const filteredTemplates = (appState.messageTemplates || []).filter(t => {
