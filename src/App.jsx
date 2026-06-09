@@ -39,7 +39,7 @@ import {
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { getAllVisibleFeeRecords, getCompletedFeeTenures, formatFeeTenure, getFeeTenureDates, isOverdueFeeRecord } from "../../shared/feeVisibility.js";
+import { getAllVisibleFeeRecords, getCompletedFeeTenures, formatFeeTenure, getFeeTenureDates, isOverdueFeeRecord } from "./utils/feeVisibility.js";
 import { Capacitor } from "@capacitor/core";
 import { Filesystem, Directory } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
