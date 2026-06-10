@@ -67,7 +67,8 @@ import { seedData, defaultSubjects } from "./utils/seedData";
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const deepBlue = "#1e3a8a";
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+const rawApiUrl = import.meta.env.VITE_API_URL || "https://kishan-classes-backend.onrender.com";
+const API_BASE_URL = rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl;
 const STATE_API_URL = `${API_BASE_URL}/api/state`;
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Home },
@@ -352,7 +353,7 @@ function syncStudentFeeRecords(feeRecords, previousStudent, nextStudent) {
       if (record.studentId !== previousStudent.id || record.transactionType === "OPENING_BALANCE") {
         return true;
       }
-      
+
       if (["Dropped", "Completed", "Transferred", "Archived"].includes(nextStudent.status) && wEnd) {
         const recordDate = new Date(record.dueDate);
         const recordMonthStart = new Date(recordDate.getFullYear(), recordDate.getMonth(), 1);
@@ -430,42 +431,90 @@ export function calculateFeeSummary(feeRecords, isOverdueFeeRecord) {
   const generatedMonthlyDues = feeRecords.filter(r => r.transactionType !== "OPENING_BALANCE").reduce((sum, r) => sum + (Number(r.amountDue) || 0), 0);
   const paymentsReceived = feeRecords.reduce((sum, r) => sum + (Number(r.amountPaid) || 0), 0);
   const currentOutstanding = Math.max(0, previousBalance + generatedMonthlyDues - paymentsReceived);
-  
+
   return { previousBalance, generatedMonthlyDues, paymentsReceived, currentOutstanding };
 }
 
-async function apiFetch(endpoint, options = {}) {
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function apiFetch(endpoint, options = {}, retries = 2, backoff = 1000) {
   const headers = { ...options.headers };
   const token = localStorage.getItem("token");
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (!options.body || typeof options.body === "string") {
     headers["Content-Type"] = headers["Content-Type"] || "application/json";
   }
-  const timeout = options.timeout || 15000;
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
+
+  const timeout = options.timeout || 60000;
+  const timeoutController = new AbortController();
+  const id = setTimeout(() => timeoutController.abort(), timeout);
+
+  // Link external signal to our internal controller
+  const externalSignal = options.signal;
+  const abortHandler = () => timeoutController.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(id);
+      throw new DOMException("Aborted", "AbortError");
+    }
+    externalSignal.addEventListener("abort", abortHandler);
+  }
+
+  console.log(`[Frontend:API] 🚀 Initiating request to: ${endpoint}`, { method: options.method || 'GET', timeout });
   
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, { 
-      ...options, 
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
       headers,
-      signal: controller.signal 
+      signal: timeoutController.signal
     });
+
     clearTimeout(id);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", abortHandler);
+    }
+
+    // Retry on transient server errors (5xx) or rate limits (429)
+    if (!response.ok && (response.status >= 500 || response.status === 429) && retries > 0) {
+      console.warn(`[Frontend:API] ⚠️ Transient error on ${endpoint} (${response.status}). Retrying...`);
+      throw new Error("Transient server error");
+    }
+    
+    console.log(`[Frontend:API] ✅ Success: ${endpoint} (${response.status})`);
     return response;
   } catch (error) {
     clearTimeout(id);
-    if (error.name === 'AbortError') {
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", abortHandler);
+    }
+
+    // Only retry on network errors or transient errors, NOT on aborts
+    if (error?.name !== 'AbortError' && retries > 0) {
+      console.warn(`[Frontend:API] ⚠️ Network error on ${endpoint}. Retrying in ${backoff}ms...`, error);
+      await wait(backoff);
+      return apiFetch(endpoint, options, retries - 1, backoff * 2);
+    }
+
+    if (error?.name === 'AbortError') {
+      if (externalSignal && externalSignal.aborted) {
+        console.log(`[Frontend:API] 🛑 Request to ${endpoint} cancelled by application logic (unmount).`);
+        throw new Error("Request cancelled by application.");
+      }
+      console.error(`[Frontend:API] ❌ Request to ${endpoint} TIMED OUT after ${timeout}ms.`);
       throw new Error("Request timed out. Please check your internet connection or try again.");
     }
-    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+    if (error?.message?.includes('Failed to fetch') || error?.message?.includes('NetworkError')) {
+      console.error(`[Frontend:API] ❌ Network error (offline or unreachable) for ${endpoint}`);
       throw new Error("Network error. You might be offline or the server is unreachable.");
     }
+    console.error(`[Frontend:API] ❌ Unhandled error on ${endpoint}:`, error);
     throw error;
   }
 }
 
 function App() {
+  console.log("[Frontend:App] ⚛️ App Component Rendered", { timestamp: new Date().toISOString() });
+  
   const [appState, setAppState] = useState(seedData);
   const [activePage, setActivePage] = useState(() => {
     try {
@@ -473,7 +522,7 @@ function App() {
       if (user && user.role !== "admin" && user.role !== "testuser") {
         return "my-portal";
       }
-    } catch {}
+    } catch { }
     return "dashboard";
   });
   const [selectedStudentId, setSelectedStudentId] = useState(null);
@@ -601,23 +650,30 @@ function App() {
   const selectedStudent = appState.students.find((student) => student.id === selectedStudentId) ?? null;
   const selectedBatch = appState.batches.find((batch) => batch.id === selectedBatchId) ?? null;
 
-  const loadStateFromDatabase = useCallback(async (cancelledObj = { cancelled: false }) => {
-    if (!authToken) return;
+  const loadStateFromDatabase = useCallback(async (cancelledObj = { cancelled: false }, signal) => {
+    if (!authToken) {
+      console.log("[Frontend:State] ⏸️ loadStateFromDatabase skipped: No authToken present.");
+      return;
+    }
+    console.log("[Frontend:State] 🔄 Starting loadStateFromDatabase...");
     setIsRefreshing(true);
     try {
-      const response = await apiFetch('/api/state', { headers: fetchHeaders, timeout: 30000 });
+      const response = await apiFetch('/api/state', { headers: fetchHeaders, timeout: 60000, signal });
       let templatesRes = null;
       if (isAdmin) {
-        templatesRes = await apiFetch('/api/message-templates', { headers: fetchHeaders, timeout: 15000 });
+        templatesRes = await apiFetch('/api/message-templates', { headers: fetchHeaders, timeout: 60000, signal });
       }
-      
+
       if (!response.ok) {
+        console.error(`[Frontend:State] ❌ Failed to load main state payload. Status: ${response.status}`);
         if (response.status === 401) {
+          console.warn("[Frontend:State] 🔒 Unauthorized (401). Triggering logout...");
           handleLogout();
         }
         throw new Error("Failed to load state");
       }
 
+      console.log("[Frontend:State] 📥 Parsing state payload response...");
       const data = await response.json();
       if (isAdmin && templatesRes?.ok) {
         data.messageTemplates = await templatesRes.json();
@@ -648,10 +704,14 @@ function App() {
           }
           initialDataLoadedRef.current = true;
         }
+        console.log(`[Frontend:State] ✅ State successfully updated in UI.`);
         setAppState(data);
         setIsDatabaseReady(true);
+      } else {
+        console.log("[Frontend:State] 🛑 State update skipped: Component unmounted or polling superseded.");
       }
-    } catch {
+    } catch (error) {
+      console.error("[Frontend:State] 💥 Error caught in loadStateFromDatabase:", error);
       if (!cancelledObj.cancelled) {
         setIsDatabaseReady(false);
         addToast("Server storage unavailable. Using temporary in-memory data.", "danger");
@@ -664,24 +724,33 @@ function App() {
   }, [authToken, fetchHeaders, addToast, authUser]);
 
   useEffect(() => {
+    let timeoutId;
+    const controller = new AbortController();
     const cancelledObj = { cancelled: false };
-    if (authToken) {
-      loadStateFromDatabase(cancelledObj);
 
-      // Poll every 30 seconds to fetch updates (like new test scores)
-      const intervalId = setInterval(() => {
+    if (authToken) {
+      const poll = async () => {
+        if (cancelledObj.cancelled) return;
+        console.log("[Frontend:Polling] ⏰ Triggering polling request...");
+        await loadStateFromDatabase(cancelledObj, controller.signal);
         if (!cancelledObj.cancelled) {
-          loadStateFromDatabase(cancelledObj);
+          console.log("[Frontend:Polling] ⏱️ Scheduling next poll in 30s...");
+          // Recursive setTimeout ensures the next poll ONLY begins after the current one completes
+          timeoutId = setTimeout(poll, 30000);
         }
-      }, 30000);
+      };
+
+      poll();
 
       return () => {
         cancelledObj.cancelled = true;
-        clearInterval(intervalId);
+        controller.abort(); // Properly abort any pending fetch requests on unmount
+        clearTimeout(timeoutId);
       };
     }
     return () => {
       cancelledObj.cancelled = true;
+      controller.abort();
     };
   }, [authToken, loadStateFromDatabase]);
 
@@ -755,7 +824,7 @@ function App() {
       addToast("Test User can't do this action.", "danger");
       return;
     }
-    const nextState = recipe(structuredClone(latestStateRef.current));
+    const nextState = recipe(JSON.parse(JSON.stringify(latestStateRef.current)));
     setAppState(nextState);
     latestStateRef.current = nextState;
     persistState(nextState);
@@ -772,7 +841,7 @@ function App() {
         draft.students[index] = updatedStudent;
         draft.feeRecords = syncStudentFeeRecords(draft.feeRecords, editingStudent, updatedStudent);
         savedStudent = updatedStudent;
-        
+
         const existingOpeningBalance = draft.feeRecords.find(r => r.studentId === updatedStudent.id && r.transactionType === "OPENING_BALANCE");
         if (existingOpeningBalance) {
           existingOpeningBalance.amountDue = Number(openingBalance) || 0;
@@ -1246,8 +1315,8 @@ function App() {
     return appState.students.filter(
       (student) => {
         const matchesSearch = student.fullName.toLowerCase().includes(term) ||
-                              student.studentId.toLowerCase().includes(term) ||
-                              student.classGrade.toLowerCase().includes(term);
+          student.studentId.toLowerCase().includes(term) ||
+          student.classGrade.toLowerCase().includes(term);
         const st = student.status || "Active";
         const matchesStatus = studentFilterStatus === "All" || st === studentFilterStatus;
         return matchesSearch && matchesStatus;
@@ -1526,15 +1595,15 @@ function App() {
 
             {activePage === "settings" && <SettingsPage settings={appState.settings} onSave={saveSettings} onUpdateAdmin={handleUpdateAdmin} onNavigate={setActivePage} />}
 
-            {activePage === "message-templates" && <MessageTemplatesPage 
-              appState={appState} 
+            {activePage === "message-templates" && <MessageTemplatesPage
+              appState={appState}
               onSave={async (id, data) => {
                 const res = await fetch(`${API_BASE_URL}/api/message-templates/${id}`, {
                   method: 'PUT',
                   headers: { ...fetchHeaders, 'Content-Type': 'application/json' },
                   body: JSON.stringify(data)
                 });
-                if(res.ok) {
+                if (res.ok) {
                   const updated = await res.json();
                   setAppState(prev => ({
                     ...prev,
@@ -1550,7 +1619,7 @@ function App() {
                   method: 'POST',
                   headers: fetchHeaders
                 });
-                if(res.ok) {
+                if (res.ok) {
                   const updated = await res.json();
                   setAppState(prev => ({
                     ...prev,
@@ -1567,7 +1636,7 @@ function App() {
                   headers: { ...fetchHeaders, 'Content-Type': 'application/json' },
                   body: JSON.stringify({ content, data })
                 });
-                if(res.ok) {
+                if (res.ok) {
                   const json = await res.json();
                   return json.preview;
                 }
@@ -1743,7 +1812,7 @@ function computeDashboard(appState) {
   const currentMonthRecords = appState.feeRecords.filter((record) => record.monthKey === currentMonthKey);
   const totalCollected = currentMonthRecords.reduce((sum, record) => sum + Number(record.amountPaid || 0), 0);
   const allVisibleRecords = getAllVisibleFeeRecords(appState.feeRecords, appState.students);
-  
+
   const pendingFees = allVisibleRecords.reduce((sum, record) => {
     if (record.status !== "Paid") {
       return sum + Math.max(0, Number(record.amountDue || 0) - Number(record.amountPaid || 0));
@@ -1915,7 +1984,7 @@ function buildFeeGrid(appState, filters) {
   });
 
   const allVisibleRecords = getAllVisibleFeeRecords(appState.feeRecords, appState.students);
-  
+
   const totals = appState.feeRecords.reduce((acc, record) => {
     acc.collected += Number(record.amountPaid || 0);
     return acc;
@@ -2315,7 +2384,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2"><MessageCircle size={20} className="text-[#1e3a8a]"/> Telegram Notifications</h4>
+          <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2"><MessageCircle size={20} className="text-[#1e3a8a]" /> Telegram Notifications</h4>
         </div>
         <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between">
           <div className="mb-4 sm:mb-0">
@@ -2323,7 +2392,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
             <p className="text-sm text-slate-500">{student.telegramParentChatId ? "Connected ✅" : "Not connected ❌"}</p>
           </div>
           {!student.telegramParentChatId && (
-            <button 
+            <button
               onClick={async () => {
                 try {
                   const res = await fetch(`${API_BASE_URL}/api/telegram/link-token?type=parent`, {
@@ -2356,7 +2425,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
           )}
           {["Dropped", "Completed", "Transferred"].includes(student.status) && (() => {
             const { currentOutstanding } = calculateFeeSummary(allFeeRecords, isOverdueFeeRecord);
-            
+
             return currentOutstanding === 0 && (
               <button
                 className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 transition flex items-center gap-2"
@@ -2386,7 +2455,7 @@ function StudentProfile({ student, appState, isAdmin, onExportProgress, onSendFe
         <div className="grid gap-4 md:grid-cols-4">
           {(() => {
             const { previousBalance, generatedMonthlyDues, paymentsReceived, currentOutstanding } = calculateFeeSummary(allFeeRecords, isOverdueFeeRecord);
-            
+
             return (
               <>
                 <div>
@@ -3053,8 +3122,8 @@ function LearningPage({ appState, learningView, filter, setFilter, onAddScore, o
           </Panel>
         )}
 
-        <Panel 
-          title="Full Test History" 
+        <Panel
+          title="Full Test History"
           icon={FileText}
           action={
             <div className="flex gap-2 items-center">
@@ -3149,7 +3218,7 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
   const [templates, setTemplates] = useState(appState.settings.templates);
   const [broadcastSubject, setBroadcastSubject] = useState("");
   const [broadcastMessage, setBroadcastMessage] = useState("");
-  
+
   const [telegramAudience, setTelegramAudience] = useState("all");
   const [telegramBatch, setTelegramBatch] = useState("all");
   const [telegramMessage, setTelegramMessage] = useState("");
@@ -3296,7 +3365,7 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
           <div className="flex gap-4">
             <div className="flex-1">
               <label className="block text-sm font-medium text-slate-700 mb-1">Audience</label>
-              <select 
+              <select
                 className="w-full rounded-xl border border-slate-200 px-4 py-2 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a]"
                 value={telegramAudience}
                 onChange={e => setTelegramAudience(e.target.value)}
@@ -3310,7 +3379,7 @@ function NotificationsPage({ appState, candidates, onOpenNotification, onBulk, o
             {telegramAudience === "batch" && (
               <div className="flex-1">
                 <label className="block text-sm font-medium text-slate-700 mb-1">Batch</label>
-                <select 
+                <select
                   className="w-full rounded-xl border border-slate-200 px-4 py-2 outline-none focus:border-[#1e3a8a] focus:ring-1 focus:ring-[#1e3a8a]"
                   value={telegramBatch}
                   onChange={e => setTelegramBatch(e.target.value)}
@@ -3629,7 +3698,7 @@ function WithdrawStudentModal({ student, onClose, onSave }) {
 function StudentFormModal({ appState, initialValue, onClose, onSave, isAdmin }) {
   const defaultAdmissionDate = new Date().toISOString().slice(0, 10);
   const defaultFeeDueDay = Number(defaultAdmissionDate.slice(8, 10));
-  
+
   const existingOpeningRecord = initialValue ? appState.feeRecords.find(r => r.studentId === initialValue.id && r.transactionType === "OPENING_BALANCE") : null;
   const initialOpeningBalance = existingOpeningRecord ? existingOpeningRecord.amountDue : 0;
 
@@ -4082,7 +4151,7 @@ function buildTemplatePayload(appState, student, templateKey, data, payloadOverr
     coachingName: appState.settings.coachingName,
     ...data
   });
-  
+
   return {
     title: payloadOverrides.title || `${template?.templateName || templateKey} • ${student.fullName}`,
     studentId: student.id,
@@ -4137,7 +4206,7 @@ function buildFeeNotificationPayload(appState, student, record, reminderType) {
   if (reminderType === "Overdue Notice" || reminderType === "Final Notice") {
     templateKey = "fee_overdue_reminder";
   }
-  
+
   const allFeeRecords = getCompletedFeeTenures(appState.feeRecords, student);
   const { currentOutstanding } = calculateFeeSummary(allFeeRecords, isOverdueFeeRecord);
 
@@ -4538,7 +4607,7 @@ function MessageTemplatesPage({ appState, onSave, onReset, onPreview, onBack }) 
       </div>
 
       {editingTemplate && (
-        <TemplateEditorModal 
+        <TemplateEditorModal
           template={editingTemplate}
           onClose={() => setEditingTemplate(null)}
           onSave={async (data) => {
@@ -4546,7 +4615,7 @@ function MessageTemplatesPage({ appState, onSave, onReset, onPreview, onBack }) 
             setEditingTemplate(null);
           }}
           onReset={() => {
-            if(window.confirm("Are you sure you want to reset this template to its default content?")) {
+            if (window.confirm("Are you sure you want to reset this template to its default content?")) {
               onReset(editingTemplate._id);
               setEditingTemplate(null);
             }
@@ -4556,7 +4625,7 @@ function MessageTemplatesPage({ appState, onSave, onReset, onPreview, onBack }) 
       )}
 
       {previewingTemplate && (
-        <TemplatePreviewModal 
+        <TemplatePreviewModal
           template={previewingTemplate}
           onClose={() => setPreviewingTemplate(null)}
           onPreview={onPreview}
@@ -4575,12 +4644,12 @@ function TemplateEditorModal({ template, onClose, onSave, onReset, onPreviewClic
     const textToInsert = `{{${variable}}}`;
     const textarea = textareaRef.current;
     if (!textarea) return;
-    
+
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const newContent = content.substring(0, start) + textToInsert + content.substring(end);
     setContent(newContent);
-    
+
     // Reset focus and cursor position
     setTimeout(() => {
       textarea.focus();
@@ -4609,7 +4678,7 @@ function TemplateEditorModal({ template, onClose, onSave, onReset, onPreviewClic
             </label>
           </div>
         </div>
-        
+
         <div className="md:w-72 space-y-4">
           <div className="rounded-2xl bg-blue-50/50 border border-blue-100 p-4">
             <p className="text-sm font-bold text-blue-900 mb-3 flex items-center gap-2">
@@ -4628,7 +4697,7 @@ function TemplateEditorModal({ template, onClose, onSave, onReset, onPreviewClic
               ))}
             </div>
           </div>
-          
+
           <button
             onClick={onPreviewClick}
             className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition flex items-center justify-center gap-2"
@@ -4637,7 +4706,7 @@ function TemplateEditorModal({ template, onClose, onSave, onReset, onPreviewClic
           </button>
         </div>
       </div>
-      
+
       <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
         <button onClick={onReset} className="text-sm font-semibold text-red-600 hover:text-red-700 transition px-2 py-1">
           Reset to Default
@@ -4646,7 +4715,7 @@ function TemplateEditorModal({ template, onClose, onSave, onReset, onPreviewClic
           <button onClick={onClose} className="rounded-xl px-5 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
             Cancel
           </button>
-          <button 
+          <button
             onClick={() => onSave({ content, isActive })}
             className="rounded-xl bg-[#1e3a8a] px-6 py-2 text-sm font-semibold text-white shadow hover:bg-blue-900 transition flex items-center gap-2"
           >
@@ -4666,7 +4735,7 @@ function TemplatePreviewModal({ template, onClose, onPreview }) {
     // Generate dummy data based on required variables
     const dummy = {};
     template.variables.forEach(v => {
-      switch(v) {
+      switch (v) {
         case "studentName": dummy[v] = "Rahul Kumar"; break;
         case "parentName": dummy[v] = "Rajesh Kumar"; break;
         case "studentId": dummy[v] = "CC-2026-001"; break;
