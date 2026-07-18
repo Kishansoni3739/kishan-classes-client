@@ -38,7 +38,7 @@ export const Login = () => {
             Kishan Classes
           </h2>
           <p className="mt-2 text-center text-sm text-slate-500">
-            Sign in to access your dashboard
+            Sign in to access
           </p>
         </div>
 
