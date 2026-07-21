@@ -36,7 +36,7 @@ export const Dashboard = () => {
     return (
       <>
         <section className="space-y-6">
-          <Header title={`${user.name}`} subtitle="Profile, fees, recent results, materials, and notices." />
+          <Header title={`${user.name.toUpperCase()}`} subtitle="Profile, fees, recent results, materials, and notices." />
           <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
             <StatCard label="Student ID" value={data.student?.studentId || "-"} />
             <StatCard label="Batch" value={data.student?.batch?.name || "-"} tone="slate" />
