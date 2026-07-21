@@ -19,6 +19,11 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem("kc_token");
       localStorage.removeItem("kc_user");
+      localStorage.removeItem("kc_profile");
+      localStorage.removeItem("kc_switchable_profiles");
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login";
+      }
     }
     return Promise.reject(error);
   }
