@@ -41,7 +41,10 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (username, password) => {
-    const { data } = await api.post("/auth/login", { username, password });
+    const cleanUsername = String(username || "").trim();
+    console.log("[AUTH CONTEXT] Sending login request to /auth/login with payload:", { username: cleanUsername, passwordLength: password ? password.length : 0 });
+    
+    const { data } = await api.post("/auth/login", { username: cleanUsername, password });
     const normalizedUser = {
       ...data.user,
       role: data.role ? data.role.toLowerCase() : data.user.role?.toLowerCase()
