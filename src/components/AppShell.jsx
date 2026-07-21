@@ -5,8 +5,57 @@ import { navItems } from "../data/navigation.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
 export const AppShell = () => {
-  const { user, profile, logout } = useAuth();
+  const { user, profile, switchableProfiles, switchProfile, logout } = useAuth();
   const [open, setOpen] = useState(false);
+
+  const ProfileSwitcher = () => {
+    const [isOpen, setIsOpen] = useState(false);
+
+    if (user?.role !== "student" || !switchableProfiles || switchableProfiles.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="relative inline-block text-left">
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-all cursor-pointer"
+        >
+          <span>Switch Student ({switchableProfiles.length})</span>
+          <svg className={`h-4 w-4 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setIsOpen(false)} />
+            <div className="absolute right-0 z-40 mt-2 w-56 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black/5 focus:outline-none">
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                Guardian Accounts
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {switchableProfiles.map((sibling) => (
+                  <button
+                    key={sibling.userId}
+                    onClick={() => {
+                      setIsOpen(false);
+                      switchProfile(sibling.userId);
+                    }}
+                    className="w-full text-left block px-3 py-2 text-xs hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    <div className="font-semibold text-slate-800">{sibling.name}</div>
+                    <div className="text-[10px] text-slate-400">ID: {sibling.studentId}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
 
   const items = useMemo(() => {
     const list = navItems.filter((item) => item.roles.includes(user.role));
@@ -98,6 +147,7 @@ export const AppShell = () => {
             </div>
             
             <div className="ml-auto flex items-center gap-3">
+              <ProfileSwitcher />
               <span className="rounded-full bg-saffron/15 px-3 py-1 text-xs font-semibold capitalize text-amber-700">{user.role}</span>
               <button
                 className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
