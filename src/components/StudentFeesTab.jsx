@@ -16,6 +16,7 @@ import {
   X,
   Undo2
 } from "lucide-react";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const SectionCard = ({ title, icon: Icon, children, className = "" }) => (
   <div className={`overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm flex flex-col ${className}`}>
@@ -38,6 +39,7 @@ const EmptyState = ({ message }) => (
 
 export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
   const { student, monthlyTenures = [] } = profile;
+  const { user } = useAuth();
   
   const [collectModalOpen, setCollectModalOpen] = useState(false);
   const [selectedTenure, setSelectedTenure] = useState(null);
@@ -318,7 +320,7 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
                       <div><span className="opacity-70">Paid:</span> <span className="font-medium">{money(paid)}</span></div>
                       {balance > 0 && <div className="col-span-2 font-bold mt-1"><span className="opacity-80">Balance:</span> {money(balance)}</div>}
                     </div>
-                    {t.status !== "paid" && t.status !== "future" && (
+                    {user?.role !== "student" && t.status !== "paid" && t.status !== "future" && (
                       <button onClick={() => handleCollectClick(t)} className="absolute inset-0 bg-black/50 text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm print:hidden">
                         Collect Fee
                       </button>
@@ -495,7 +497,7 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
                         <span className={`font-bold ${p.status === "reversed" ? 'text-slate-400 line-through' : 'text-ink'}`}>{money(p.amount)}</span>
                         <div className="flex flex-col items-end gap-1">
                           <span className="text-xs text-slate-500">{date(p.paidAt)}</span>
-                          {(!p.status || p.status === "active") && (
+                          {user?.role !== "student" && (!p.status || p.status === "active") && (
                             <button onClick={() => handleReverseClick(p)} className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[10px] uppercase font-bold text-rose-600 hover:text-rose-700 print:hidden">
                               <Undo2 size={12} /> Reverse
                             </button>

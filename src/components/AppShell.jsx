@@ -59,10 +59,10 @@ export const AppShell = () => {
 
   const items = useMemo(() => {
     const list = navItems.filter((item) => item.roles.includes(user.role));
-    if (profile?._id && (user.role === "teacher" || user.role === "student")) {
+    if (profile?._id && user.role === "teacher") {
       list.push({
         label: "My Profile",
-        path: `/${user.role === "teacher" ? "teachers" : "students"}/${profile._id}`,
+        path: `/teachers/${profile._id}`,
         icon: User,
         roles: [user.role]
       });
@@ -134,9 +134,9 @@ export const AppShell = () => {
             </button>
             <div className="hidden lg:block">
               <div className="text-sm text-slate-500">Welcome back</div>
-              {profile?._id && (user.role === "teacher" || user.role === "student") ? (
+              {profile?._id && user.role === "teacher" ? (
                 <NavLink 
-                  to={`/${user.role === "teacher" ? "teachers" : "students"}/${profile._id}`} 
+                  to={`/teachers/${profile._id}`} 
                   className="font-semibold text-ink hover:text-brand hover:underline transition-colors"
                 >
                   {user.name}

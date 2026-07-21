@@ -530,7 +530,7 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
                                     </div>
                                   </div>
                                   <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
-                                    {fee.status !== "paid" && (
+                                    {user.role !== "student" && fee.status !== "paid" && (
                                       <IconButton label="Collect fee" onClick={() => setCollecting(fee)}>
                                         <IndianRupee size={16} />
                                       </IconButton>
@@ -748,7 +748,7 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
                                  <td className="px-4 py-2"><Cell value={fee.status} label="Status" /></td>
                                  <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                                     <div className="flex justify-end gap-2">
-                                      {fee.status !== "paid" && (
+                                      {user.role !== "student" && fee.status !== "paid" && (
                                         <IconButton label="Collect fee" onClick={() => setCollecting(fee)}>
                                           <IndianRupee size={16} />
                                         </IconButton>
