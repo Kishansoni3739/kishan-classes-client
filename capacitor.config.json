@@ -1,5 +1,5 @@
 {
-  "appId": "com.kishanclasses.app",
+  "appId": "com.kishan.classes",
   "appName": "Kishan Classes",
   "webDir": "dist",
   "server": {
@@ -15,7 +15,8 @@
     },
     "StatusBar": {
       "style": "DARK",
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#0f172a",
+      "overlaysWebView": false
     },
     "Keyboard": {
       "resize": "body",
