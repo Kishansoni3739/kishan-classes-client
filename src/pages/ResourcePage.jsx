@@ -455,26 +455,70 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
           <button className="h-11 md:h-10 w-full sm:w-auto shrink-0 rounded-md bg-slate-900 px-6 text-sm font-semibold text-white hover:bg-slate-800">Search</button>
         </div>
         
+        {/* Mobile Quick Filter Chips */}
+        {config.filters && config.filters.length > 0 && (
+          <div className="flex sm:hidden items-center gap-1.5 overflow-x-auto py-1.5 px-1 no-scrollbar text-xs border-t border-slate-100 mt-1">
+            {config.filters.map(filter => (
+              <React.Fragment key={filter.key}>
+                {filter.options && filter.options.map(opt => {
+                  const isActive = filters[filter.key] === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => {
+                        const newFilters = { ...filters };
+                        if (isActive) delete newFilters[filter.key];
+                        else newFilters[filter.key] = opt.value;
+                        setFilters(newFilters);
+                      }}
+                      className={`px-3 py-1.5 rounded-full font-bold whitespace-nowrap border transition-all ${
+                        isActive
+                          ? "bg-brand text-white border-brand shadow-xs"
+                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+            {Object.keys(filters).length > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilters({})}
+                className="px-2.5 py-1.5 rounded-full font-bold text-rose-600 bg-rose-50 border border-rose-200 text-xs whitespace-nowrap"
+              >
+                Clear All
+              </button>
+            )}
+          </div>
+        )}
+        
         {showFilters && config.filters && config.filters.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3 mt-1 border-t border-slate-100 bg-slate-50/30 rounded-b-md">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3 mt-1 border-t border-slate-100 bg-slate-50/50 rounded-b-xl">
             {config.filters.map(filter => (
               <div key={filter.key} className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{filter.label}</label>
-                <select 
-                  className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-brand focus:ring-1 focus:ring-brand"
-                  value={filters[filter.key] || ""}
-                  onChange={(e) => {
-                     const newFilters = { ...filters, [filter.key]: e.target.value };
-                     if (!e.target.value) delete newFilters[filter.key];
-                     setFilters(newFilters);
-                  }}
-                >
-                  <option value="">All</option>
-                  {filter.type === 'api' 
-                    ? (lookups[filter.endpoint] || []).map(opt => <option key={opt[filter.valueKey]} value={opt[filter.valueKey]}>{opt[filter.labelKey]}</option>)
-                    : filter.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)
-                  }
-                </select>
+                <div className="relative w-full">
+                  <select 
+                    className="h-12 md:h-10 w-full appearance-none rounded-xl border border-slate-300 bg-white pl-3.5 pr-10 text-base sm:text-sm font-medium text-slate-700 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 transition-all cursor-pointer"
+                    value={filters[filter.key] || ""}
+                    onChange={(e) => {
+                       const newFilters = { ...filters, [filter.key]: e.target.value };
+                       if (!e.target.value) delete newFilters[filter.key];
+                       setFilters(newFilters);
+                    }}
+                  >
+                    <option value="">All</option>
+                    {filter.type === 'api' 
+                      ? (lookups[filter.endpoint] || []).map(opt => <option key={opt[filter.valueKey]} value={opt[filter.valueKey]}>{opt[filter.labelKey]}</option>)
+                      : filter.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)
+                    }
+                  </select>
+                  <ChevronDown size={18} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                </div>
               </div>
             ))}
           </div>
@@ -1477,20 +1521,23 @@ export const Field = ({ field, value, onChange, lookups, values }) => {
 
   if (field.type === "select-static") {
     return (
-      <label className="text-sm font-medium text-slate-700">
+      <label className="text-sm font-medium text-slate-700 block">
         {label}
-        <select className={baseClass} value={value || ""} onChange={(event) => onChange(field.name, event.target.value)} required={field.required}>
-          <option value="">Select</option>
-          {field.options.map((option) => {
-            const val = typeof option === "object" ? option.value : option;
-            const lbl = typeof option === "object" ? option.label : option;
-            return (
-              <option key={val} value={val}>
-                {lbl}
-              </option>
-            );
-          })}
-        </select>
+        <div className="relative mt-1 w-full">
+          <select className="h-11 w-full appearance-none rounded-lg border border-slate-300 bg-white pl-3 pr-10 text-base sm:text-sm font-medium text-slate-700 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 cursor-pointer" value={value || ""} onChange={(event) => onChange(field.name, event.target.value)} required={field.required}>
+            <option value="">Select</option>
+            {field.options.map((option) => {
+              const val = typeof option === "object" ? option.value : option;
+              const lbl = typeof option === "object" ? option.label : option;
+              return (
+                <option key={val} value={val}>
+                  {lbl}
+                </option>
+              );
+            })}
+          </select>
+          <ChevronDown size={18} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        </div>
       </label>
     );
   }
@@ -1509,9 +1556,9 @@ export const Field = ({ field, value, onChange, lookups, values }) => {
     };
 
     return (
-      <div className="flex flex-col space-y-1 sm:col-span-2">
-        <span className="text-sm font-medium text-slate-700">{label}</span>
-        <div className="border border-slate-300 rounded-md p-3 max-h-48 overflow-y-auto space-y-2 bg-white kc-scrollbar shadow-inner">
+      <div className="text-sm font-medium text-slate-700 sm:col-span-2">
+        {label}
+        <div className="mt-1 max-h-48 overflow-y-auto border border-slate-300 rounded-md p-3 space-y-2 bg-white kc-scrollbar shadow-inner">
           {options.length === 0 ? (
             <span className="text-xs text-slate-400 italic">No options available</span>
           ) : (
@@ -1540,21 +1587,24 @@ export const Field = ({ field, value, onChange, lookups, values }) => {
   if (field.type === "select") {
     const options = lookups[field.source] || [];
     return (
-      <label className="text-sm font-medium text-slate-700">
+      <label className="text-sm font-medium text-slate-700 block">
         {label}
-        <select
-          className={baseClass}
-          value={value || ""}
-          onChange={(event) => onChange(field.name, event.target.value)}
-          required={field.required}
-        >
-          <option value="">Select</option>
-          {options.map((option) => (
-            <option key={option._id} value={option._id}>
-              {display(getPath(option, field.optionLabel || "name"))}
-            </option>
-          ))}
-        </select>
+        <div className="relative mt-1 w-full">
+          <select
+            className="h-11 w-full appearance-none rounded-lg border border-slate-300 bg-white pl-3 pr-10 text-base sm:text-sm font-medium text-slate-700 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 cursor-pointer"
+            value={value || ""}
+            onChange={(event) => onChange(field.name, event.target.value)}
+            required={field.required}
+          >
+            <option value="">Select</option>
+            {options.map((option) => (
+              <option key={option._id} value={option._id}>
+                {display(getPath(option, field.optionLabel || "name"))}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={18} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        </div>
       </label>
     );
   }
@@ -1729,15 +1779,28 @@ const CollectFeeModal = ({ fee, resourceType, onClose, onSaved }) => {
           Payment Date
           <input className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-base sm:text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 bg-white" type="date" value={paidAt} onChange={(event) => setPaidAt(event.target.value)} required />
         </label>
-        <label className="block text-sm font-medium text-slate-700">
-          Method
-          <select className="mt-1 h-11 w-full rounded-md border border-slate-300 px-3" value={method} onChange={(event) => setMethod(event.target.value)}>
-            {["cash", "upi", "card", "bank_transfer", "cheque"].map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+          Payment Method
+          <div className="relative mt-1 w-full">
+            <select 
+              className="h-11 w-full appearance-none rounded-lg border border-slate-300 bg-white pl-3 pr-10 text-base sm:text-sm font-medium text-slate-700 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 cursor-pointer" 
+              value={method} 
+              onChange={(event) => setMethod(event.target.value)}
+            >
+              {[
+                { val: "upi", lbl: "UPI / QR Code" },
+                { val: "cash", lbl: "Cash" },
+                { val: "card", lbl: "Debit / Credit Card" },
+                { val: "bank_transfer", lbl: "Bank Transfer (NEFT/IMPS)" },
+                { val: "cheque", lbl: "Cheque" }
+              ].map((option) => (
+                <option key={option.val} value={option.val}>
+                  {option.lbl}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={18} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          </div>
         </label>
         <label className="block text-sm font-medium text-slate-700">
           Note
