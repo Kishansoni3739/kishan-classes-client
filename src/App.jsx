@@ -27,9 +27,13 @@ const LoadingFallback = () => (
   </div>
 );
 
+import { NetworkStatus } from "./components/NetworkStatus.jsx";
+
 export default function App() {
   return (
-    <Suspense fallback={<LoadingFallback />}>
+    <>
+      <NetworkStatus />
+      <Suspense fallback={<LoadingFallback />}>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
@@ -55,6 +59,7 @@ export default function App() {
         </Route>
       </Routes>
     </Suspense>
+    </>
   );
 }
 
