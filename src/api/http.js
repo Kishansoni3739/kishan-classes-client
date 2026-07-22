@@ -1,6 +1,18 @@
 import axios from "axios";
 
-export const API_URL = import.meta.env.VITE_API_URL || "";
+let rawUrl = import.meta.env.VITE_API_URL || "";
+
+// Ensure /api path suffix is present if a base domain was supplied
+if (rawUrl && !rawUrl.endsWith("/api") && !rawUrl.endsWith("/api/")) {
+  rawUrl = `${rawUrl.replace(/\/$/, "")}/api`;
+}
+
+// Fallback for native Capacitor Android apps if env var is missing or blank
+if (!rawUrl && typeof window !== "undefined" && (window.location.protocol === "https:" && window.location.hostname === "localhost")) {
+  rawUrl = "https://kishan-classes.onrender.com/api";
+}
+
+export const API_URL = rawUrl || "/api";
 
 export const api = axios.create({
   baseURL: API_URL,

@@ -37,15 +37,14 @@ export const AdminDashboard = () => {
   }
 
   if (error) return <EmptyState title="Dashboard Unavailable" message={error} />;
-  if (!data) return null;
-
-  const totalStudents = data.totalStudents || 0;
-  const totalTeachers = data.totalTeachers || 0;
-  const totalBatches = data.totalBatches || 0;
-  const totalCollected = data.totalCollected || 0;
-  const totalPending = data.totalPending || 0;
+  const cards = data.cards || {};
+  const totalStudents = cards.totalStudents ?? data.totalStudents ?? 0;
+  const totalTeachers = cards.totalTeachers ?? data.totalTeachers ?? 0;
+  const totalBatches = cards.activeBatches ?? data.totalBatches ?? 0;
+  const totalCollected = cards.monthlyFeeCollection ?? data.totalCollected ?? 0;
+  const totalPending = cards.pendingFees ?? data.totalPending ?? 0;
   const recentNotices = data.recentNotices || [];
-  const recentTests = data.recentTests || [];
+  const upcomingTests = data.upcomingTests || [];
 
   return (
     <div className="space-y-6">
