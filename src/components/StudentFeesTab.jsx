@@ -310,18 +310,23 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
                           : "bg-rose-50 border-rose-200 text-rose-900";
 
                 return (
-                  <div key={t._id} className={`p-4 rounded-lg border ${style} relative overflow-hidden group`}>
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="font-bold text-sm">{formatTenureLabel(t.periodStart, t.periodEnd)}</span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/60">{t.status}</span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div><span className="opacity-70">Fee:</span> <span className="font-medium">{money(t.totalAmount)}</span></div>
-                      <div><span className="opacity-70">Paid:</span> <span className="font-medium">{money(paid)}</span></div>
-                      {balance > 0 && <div className="col-span-2 font-bold mt-1"><span className="opacity-80">Balance:</span> {money(balance)}</div>}
+                  <div key={t._id} className={`p-4 rounded-xl border ${style} flex flex-col justify-between`}>
+                    <div>
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="font-bold text-sm">{formatTenureLabel(t.periodStart, t.periodEnd)}</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/70 shadow-xs">{t.status}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div><span className="opacity-70">Fee:</span> <span className="font-medium">{money(t.totalAmount)}</span></div>
+                        <div><span className="opacity-70">Paid:</span> <span className="font-medium">{money(paid)}</span></div>
+                        {balance > 0 && <div className="col-span-2 font-bold mt-1"><span className="opacity-80">Balance Due:</span> {money(balance)}</div>}
+                      </div>
                     </div>
                     {user?.role !== "student" && t.status !== "paid" && t.status !== "future" && (
-                      <button onClick={() => handleCollectClick(t)} className="absolute inset-0 bg-black/50 text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm print:hidden">
+                      <button 
+                        onClick={() => handleCollectClick(t)} 
+                        className="mt-3 w-full h-10 bg-brand text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 shadow-sm hover:bg-teal-800 active:scale-[0.98] transition-all print:hidden"
+                      >
                         Collect Fee
                       </button>
                     )}
@@ -342,7 +347,7 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
             <div className="-mx-5 -mb-5">
               
               {/* Mobile View: Cards */}
-              <div className="block md:hidden border-t border-slate-100">
+              <div className="block md:hidden border-t border-slate-100 p-3 space-y-3 bg-slate-50/50">
                 {tenures.map((t, index) => {
                   const activePayments = t.payments?.filter(p => !p.status || p.status === "active") || [];
                   const paid = activePayments.reduce((sum, p) => sum + p.amount, 0);
@@ -350,11 +355,11 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
                   const lastPayment = activePayments.length ? new Date(Math.max(...activePayments.map(p => new Date(p.paidAt)))) : null;
                   
                   const isMostRecent = index === tenures.length - 1;
-                  const rowStyle = isMostRecent ? "bg-blue-50"
-                                 : t.status === "paid" ? "bg-emerald-50"
-                                 : t.status === "partial" ? "bg-amber-50"
-                                 : t.status === "future" ? "bg-slate-50"
-                                 : "bg-rose-50";
+                  const rowStyle = isMostRecent ? "bg-blue-50/90 border-blue-200"
+                                 : t.status === "paid" ? "bg-emerald-50/90 border-emerald-200"
+                                 : t.status === "partial" ? "bg-amber-50/90 border-amber-200"
+                                 : t.status === "future" ? "bg-slate-50/90 border-slate-200"
+                                 : "bg-rose-50/90 border-rose-200";
                   
                   const badgeStyle = isMostRecent ? "text-blue-800"
                                    : t.status === "paid" ? "text-emerald-800"
@@ -363,10 +368,10 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
                                    : "text-rose-800";
 
                   return (
-                    <div key={t._id} className={`p-5 space-y-3 border-b hover:opacity-90 transition-opacity ${rowStyle}`}>
+                    <div key={t._id} className={`p-4 rounded-xl border shadow-xs space-y-3 ${rowStyle}`}>
                       <div className="flex justify-between items-center border-b border-black/5 pb-2">
                         <span className="font-bold text-ink text-sm">{formatTenureLabel(t.periodStart, t.periodEnd)}</span>
-                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-white/60 shadow-sm ${badgeStyle}`}>
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-white/80 shadow-xs ${badgeStyle}`}>
                           {t.status}
                         </span>
                       </div>
@@ -376,6 +381,16 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
                         <div className="flex flex-col"><span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Balance</span> <span className="font-medium text-rose-600">{money(balance)}</span></div>
                         <div className="flex flex-col"><span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Last Paid</span> <span className="font-medium text-slate-700">{lastPayment ? date(lastPayment) : "-"}</span></div>
                       </div>
+                      {user?.role !== "student" && t.status !== "paid" && t.status !== "future" && (
+                        <div className="pt-2 border-t border-black/5 flex justify-end">
+                          <button 
+                            onClick={() => handleCollectClick(t)} 
+                            className="w-full h-10 bg-brand text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 shadow-sm hover:bg-teal-800 active:scale-[0.98] transition-all"
+                          >
+                            Collect Fee
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

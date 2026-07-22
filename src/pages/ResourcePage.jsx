@@ -498,19 +498,28 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
                         <div key={item._id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all space-y-3">
                           {/* Parent Card */}
                           <div 
-                            className={`cursor-pointer transition-colors ${isExpanded ? 'bg-slate-50 p-2 rounded-lg' : ''}`}
+                            className={`cursor-pointer transition-colors p-3 rounded-lg border ${isExpanded ? 'bg-slate-50 border-brand/20' : 'bg-white border-slate-100 hover:bg-slate-50/80'}`}
                             onClick={() => setExpandedGroup(isExpanded ? null : item._id)}
                           >
-                            <div className="flex justify-between items-center mb-2">
-                              <span className="font-bold text-ink text-sm">{item.studentName}</span>
-                              {isExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+                            <div className="flex justify-between items-center mb-1.5">
+                              <h3 className="font-bold text-ink text-base flex items-center gap-1.5">{item.studentName}</h3>
+                              <div className="flex items-center gap-1">
+                                <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{item.fees?.length || 0} Tenures</span>
+                                {isExpanded ? <ChevronUp size={20} className="text-brand" /> : <ChevronDown size={20} className="text-slate-400" />}
+                              </div>
                             </div>
-                            <div className="flex flex-col gap-1 text-xs">
-                              <span className="text-slate-500">Batch: <span className="font-medium text-slate-700">{item.batchName}</span></span>
+                            <div className="flex flex-col gap-2 text-xs">
+                              <span className="text-slate-500">Batch: <span className="font-semibold text-slate-700">{item.batchName}</span></span>
                               {actualKey === "monthly-fees" && (
-                                <div className="flex justify-between mt-1 pt-2 border-t border-slate-100">
-                                  <span className="text-emerald-600 font-medium">Paid: {money(item.totalPaid)}</span>
-                                  <span className="text-rose-600 font-medium">Due: {money(item.totalDue)}</span>
+                                <div className="grid grid-cols-2 gap-2 mt-1 pt-2 border-t border-slate-200/60">
+                                  <div className="bg-emerald-50 border border-emerald-200/60 rounded-lg p-2 flex flex-col">
+                                    <span className="text-[10px] uppercase font-bold text-emerald-700 tracking-wider">Paid</span>
+                                    <span className="text-sm font-extrabold text-emerald-700">{money(item.totalPaid)}</span>
+                                  </div>
+                                  <div className={`rounded-lg p-2 flex flex-col border ${item.totalDue > 0 ? 'bg-rose-50 border-rose-200/60 text-rose-700' : 'bg-slate-50 border-slate-200/60 text-slate-600'}`}>
+                                    <span className="text-[10px] uppercase font-bold tracking-wider opacity-80">Outstanding Due</span>
+                                    <span className="text-sm font-extrabold">{money(item.totalDue)}</span>
+                                  </div>
                                 </div>
                               )}
                               {actualKey === "results" && (
@@ -522,48 +531,63 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
                           </div>
                           {/* Expanded Children Cards */}
                           {isExpanded && (
-                            <div className="bg-slate-50/50 p-2 border-t border-slate-100 flex flex-col gap-2 rounded-lg">
+                            <div className="bg-slate-50/70 p-2.5 border-t border-slate-200/70 flex flex-col gap-3 rounded-lg">
                               {actualKey === "monthly-fees" && item.fees.map((fee, index) => {
                                 const isMostRecent = index === item.fees.length - 1;
-                                const rowStyle = isMostRecent ? "bg-blue-100/80 border-blue-200"
-                                         : fee.status === "paid" ? "bg-emerald-100/80 border-emerald-200"
-                                         : fee.status === "partial" ? "bg-amber-100/80 border-amber-200"
-                                         : fee.status === "future" ? "bg-slate-100/80 border-slate-200"
-                                         : "bg-rose-100/80 border-rose-200";
+                                const rowStyle = isMostRecent ? "bg-blue-50/90 border-blue-200"
+                                         : fee.status === "paid" ? "bg-emerald-50/90 border-emerald-200"
+                                         : fee.status === "partial" ? "bg-amber-50/90 border-amber-200"
+                                         : fee.status === "future" ? "bg-slate-50/90 border-slate-200"
+                                         : "bg-rose-50/90 border-rose-200";
                                 return (
-                                  <div key={fee._id} className={`p-3 rounded-lg border ${rowStyle}`} onClick={() => setSelectedItem(fee)}>
-                                    <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-xs mb-2">
+                                  <div key={fee._id} className={`p-3.5 rounded-xl border ${rowStyle} space-y-3 shadow-xs`} onClick={() => setSelectedItem(fee)}>
+                                    <div className="flex justify-between items-start border-b border-black/5 pb-2">
                                       <div className="flex flex-col">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Period Start</span>
-                                        <span className="font-medium text-slate-700">{date(fee.periodStart)}</span>
+                                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Period</span>
+                                        <span className="text-xs font-bold text-slate-800">{date(fee.periodStart)} – {date(fee.periodEnd)}</span>
                                       </div>
-                                      <div className="flex flex-col">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Period End</span>
-                                        <span className="font-medium text-slate-700">{date(fee.periodEnd)}</span>
+                                      <Cell value={fee.status} label="Status" />
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                      <div className="bg-white/70 rounded-lg p-2 border border-black/5 flex flex-col">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">Total Amount</span>
+                                        <span className="font-bold text-slate-800">{money(fee.totalAmount)}</span>
                                       </div>
-                                      <div className="flex flex-col mt-1">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Total</span>
-                                        <span className="font-medium text-slate-700">{money(fee.status === 'partial' ? fee.balance : fee.totalAmount)}</span>
-                                      </div>
-                                      <div className="flex flex-col mt-1">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Status</span>
-                                        <span className="font-medium"><Cell value={fee.status} label="Status" /></span>
+                                      <div className="bg-white/70 rounded-lg p-2 border border-black/5 flex flex-col">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">Balance Due</span>
+                                        <span className={`font-bold ${fee.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{money(fee.status === 'partial' ? fee.balance : (fee.status === 'paid' ? 0 : fee.totalAmount))}</span>
                                       </div>
                                     </div>
-                                    <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
+
+                                    {/* Mobile Responsive Action Bar */}
+                                    <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
                                       {user.role !== "student" && fee.status !== "paid" && (
-                                        <IconButton label="Collect fee" onClick={() => setCollecting(fee)}>
-                                          <IndianRupee size={16} />
-                                        </IconButton>
-                                      )}
-                                      {user.role !== "student" && fee.status !== "paid" && fee.student?.guardian?.phone && (
-                                        <button title="Send Fee Reminder" onClick={() => handleSendNotification(fee)} className="grid h-9 w-9 place-items-center rounded-md border border-[#25D366] text-[#25D366] hover:bg-[#25D366] hover:text-white transition-colors">
-                                          <MessageCircle size={16} />
+                                        <button
+                                          type="button"
+                                          onClick={() => setCollecting(fee)}
+                                          className="flex-1 sm:flex-initial inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-brand px-3 text-xs font-bold text-white shadow-xs hover:bg-teal-800 active:scale-[0.98] transition-all"
+                                        >
+                                          <IndianRupee size={15} /> Collect Fee
                                         </button>
                                       )}
-                                      <IconButton label="View Ledger" onClick={() => navigate(`/students/${fee.student._id || fee.student}`)}>
-                                        <Briefcase size={16} />
-                                      </IconButton>
+                                      {user.role !== "student" && fee.status !== "paid" && fee.student?.guardian?.phone && (
+                                        <button
+                                          type="button"
+                                          title="Send Fee Reminder"
+                                          onClick={() => handleSendNotification(fee)}
+                                          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[#25D366] bg-white px-3 text-xs font-bold text-[#25D366] hover:bg-[#25D366] hover:text-white transition-all"
+                                        >
+                                          <MessageCircle size={15} /> <span className="hidden xs:inline">WhatsApp</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => navigate(`/students/${fee.student._id || fee.student}`)}
+                                        className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-all"
+                                      >
+                                        <Briefcase size={15} /> Ledger
+                                      </button>
                                     </div>
                                   </div>
                                 );
@@ -1654,13 +1678,13 @@ const CollectFeeModal = ({ fee, resourceType, onClose, onSaved }) => {
           <div className="flex justify-between text-slate-500"><span>Total Amount:</span> <span>{money(fee.totalAmount)}</span></div>
           <div className="flex justify-between font-bold text-rose-600 mt-1 pt-1 border-t border-slate-200"><span>Outstanding Due:</span> <span>{money(pending)}</span></div>
         </div>
-        <label className="block text-sm font-medium text-slate-700">
-          Payment Amount
-          <input className="mt-1 h-11 w-full rounded-md border border-slate-300 px-3" type="number" value={amount} onChange={(event) => setAmount(event.target.value)} max={pending} min="1" required />
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+          Payment Amount (₹)
+          <input className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-base sm:text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20" type="number" value={amount} onChange={(event) => setAmount(event.target.value)} max={pending} min="1" required />
         </label>
-        <label className="block text-sm font-medium text-slate-700">
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
           Payment Date
-          <input className="mt-1 h-11 w-full rounded-md border border-slate-300 px-3" type="date" value={paidAt} onChange={(event) => setPaidAt(event.target.value)} required />
+          <input className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-base sm:text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 bg-white" type="date" value={paidAt} onChange={(event) => setPaidAt(event.target.value)} required />
         </label>
         <label className="block text-sm font-medium text-slate-700">
           Method
