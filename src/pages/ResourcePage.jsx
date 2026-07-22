@@ -1,4 +1,4 @@
-import { Download, Eye, IndianRupee, Pencil, Plus, Search, Trash2, ClipboardEdit, Briefcase, ChevronDown, ChevronUp, Filter, MessageCircle } from "lucide-react";
+import { Download, Eye, IndianRupee, Pencil, Plus, Search, Trash2, ClipboardEdit, Briefcase, ChevronDown, ChevronUp, Filter, MessageCircle, LayoutGrid, List, KeyRound } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { API_URL, api } from "../api/http.js";
@@ -44,6 +44,7 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
   const [expandedGroup, setExpandedGroup] = useState(null);
   const [filters, setFilters] = useState({});
   const [showFilters, setShowFilters] = useState(false);
+  const [viewMode, setViewMode] = useState(() => (actualKey === "students" || actualKey === "teachers" ? "grid" : "table"));
   const [waModal, setWaModal] = useState(null);
   const [waBulkModal, setWaBulkModal] = useState(null);
   const [templates, setTemplates] = useState([]);
@@ -128,6 +129,7 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
     setFilters({});
     setSearch("");
     setShowFilters(false);
+    setViewMode(actualKey === "students" || actualKey === "teachers" ? "grid" : "table");
     fetchData();
   }, [actualKey]);
 
@@ -432,6 +434,24 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
                <Filter size={16} /> Filters
             </button>
           )}
+          <div className="flex items-center rounded-md border border-slate-200 bg-slate-100/70 p-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              title="Card Grid View"
+              className={`flex items-center gap-1.5 px-3 h-10 md:h-9 text-xs font-semibold rounded-md transition-all ${viewMode === "grid" ? "bg-white text-brand shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+            >
+              <LayoutGrid size={15} /> <span className="hidden sm:inline">Cards</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              title="Table View"
+              className={`flex items-center gap-1.5 px-3 h-10 md:h-9 text-xs font-semibold rounded-md transition-all ${viewMode === "table" ? "bg-white text-brand shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+            >
+              <List size={15} /> <span className="hidden sm:inline">Table</span>
+            </button>
+          </div>
           <button className="h-11 md:h-10 w-full sm:w-auto shrink-0 rounded-md bg-slate-900 px-6 text-sm font-semibold text-white hover:bg-slate-800">Search</button>
         </div>
         
@@ -466,207 +486,351 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
       {!error && !loading && items.length === 0 && <EmptyState />}
       {!error && !loading && items.length > 0 && (
         <div className="flex flex-col lg:flex-row gap-5 items-start">
-          <div className="flex-1 overflow-hidden rounded-md border border-slate-200 bg-white w-full">
+          <div className="flex-1 w-full">
             <>
-              {/* Mobile Card View */}
-              <div className="block md:hidden border-t border-slate-100">
-                {groupedItems.map((item) => {
-                  if (item.isGroup) {
-                    const isExpanded = expandedGroup === item._id;
-                    return (
-                      <div key={item._id} className="bg-white border-b border-slate-100">
-                        {/* Parent Card */}
-                        <div 
-                          className={`p-4 cursor-pointer transition-colors hover:bg-slate-50 ${isExpanded ? 'bg-slate-50' : ''}`}
-                          onClick={() => setExpandedGroup(isExpanded ? null : item._id)}
-                        >
-                          <div className="flex justify-between items-center mb-2">
-                            <span className="font-bold text-ink text-sm">{item.studentName}</span>
-                            {isExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+              {/* Grid / Cards View (with gap between card components) */}
+              {viewMode === "grid" ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
+                  {groupedItems.map((item) => {
+                    if (item.isGroup) {
+                      const isExpanded = expandedGroup === item._id;
+                      return (
+                        <div key={item._id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all space-y-3">
+                          {/* Parent Card */}
+                          <div 
+                            className={`cursor-pointer transition-colors ${isExpanded ? 'bg-slate-50 p-2 rounded-lg' : ''}`}
+                            onClick={() => setExpandedGroup(isExpanded ? null : item._id)}
+                          >
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="font-bold text-ink text-sm">{item.studentName}</span>
+                              {isExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+                            </div>
+                            <div className="flex flex-col gap-1 text-xs">
+                              <span className="text-slate-500">Batch: <span className="font-medium text-slate-700">{item.batchName}</span></span>
+                              {actualKey === "monthly-fees" && (
+                                <div className="flex justify-between mt-1 pt-2 border-t border-slate-100">
+                                  <span className="text-emerald-600 font-medium">Paid: {money(item.totalPaid)}</span>
+                                  <span className="text-rose-600 font-medium">Due: {money(item.totalDue)}</span>
+                                </div>
+                              )}
+                              {actualKey === "results" && (
+                                <div className="flex justify-between mt-1 pt-2 border-t border-slate-100">
+                                  <span className="text-slate-600 font-medium">{item.results.length} tests taken</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex flex-col gap-1 text-xs">
-                            <span className="text-slate-500">Batch: <span className="font-medium text-slate-700">{item.batchName}</span></span>
-                            {actualKey === "monthly-fees" && (
-                              <div className="flex justify-between mt-1 pt-2 border-t border-slate-100">
-                                <span className="text-emerald-600 font-medium">Paid: {money(item.totalPaid)}</span>
-                                <span className="text-rose-600 font-medium">Due: {money(item.totalDue)}</span>
+                          {/* Expanded Children Cards */}
+                          {isExpanded && (
+                            <div className="bg-slate-50/50 p-2 border-t border-slate-100 flex flex-col gap-2 rounded-lg">
+                              {actualKey === "monthly-fees" && item.fees.map((fee, index) => {
+                                const isMostRecent = index === item.fees.length - 1;
+                                const rowStyle = isMostRecent ? "bg-blue-100/80 border-blue-200"
+                                         : fee.status === "paid" ? "bg-emerald-100/80 border-emerald-200"
+                                         : fee.status === "partial" ? "bg-amber-100/80 border-amber-200"
+                                         : fee.status === "future" ? "bg-slate-100/80 border-slate-200"
+                                         : "bg-rose-100/80 border-rose-200";
+                                return (
+                                  <div key={fee._id} className={`p-3 rounded-lg border ${rowStyle}`} onClick={() => setSelectedItem(fee)}>
+                                    <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-xs mb-2">
+                                      <div className="flex flex-col">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Period Start</span>
+                                        <span className="font-medium text-slate-700">{date(fee.periodStart)}</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Period End</span>
+                                        <span className="font-medium text-slate-700">{date(fee.periodEnd)}</span>
+                                      </div>
+                                      <div className="flex flex-col mt-1">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Total</span>
+                                        <span className="font-medium text-slate-700">{money(fee.status === 'partial' ? fee.balance : fee.totalAmount)}</span>
+                                      </div>
+                                      <div className="flex flex-col mt-1">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Status</span>
+                                        <span className="font-medium"><Cell value={fee.status} label="Status" /></span>
+                                      </div>
+                                    </div>
+                                    <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
+                                      {user.role !== "student" && fee.status !== "paid" && (
+                                        <IconButton label="Collect fee" onClick={() => setCollecting(fee)}>
+                                          <IndianRupee size={16} />
+                                        </IconButton>
+                                      )}
+                                      {user.role !== "student" && fee.status !== "paid" && fee.student?.guardian?.phone && (
+                                        <button title="Send Fee Reminder" onClick={() => handleSendNotification(fee)} className="grid h-9 w-9 place-items-center rounded-md border border-[#25D366] text-[#25D366] hover:bg-[#25D366] hover:text-white transition-colors">
+                                          <MessageCircle size={16} />
+                                        </button>
+                                      )}
+                                      <IconButton label="View Ledger" onClick={() => navigate(`/students/${fee.student._id || fee.student}`)}>
+                                        <Briefcase size={16} />
+                                      </IconButton>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {actualKey === "results" && item.results.map((result) => {
+                                return (
+                                  <div key={result._id} className="p-3 rounded-lg border bg-white border-slate-200 shadow-sm" onClick={() => setSelectedItem(result)}>
+                                    <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-xs mb-2">
+                                      <div className="flex flex-col">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Test</span>
+                                        <span className="font-medium text-slate-700">{result.test?.title}</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Date</span>
+                                        <span className="font-medium text-slate-700">{date(result.test?.testDate)}</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Marks</span>
+                                        <span className="font-medium text-slate-700">{result.marksObtained} / {result.test?.maxMarks}</span>
+                                      </div>
+                                      <div className="flex flex-col mt-1">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Percentage</span>
+                                        <span className="font-medium text-slate-700">{result.percentage != null ? result.percentage.toFixed(1) + "%" : "-"}</span>
+                                      </div>
+                                      <div className="flex flex-col mt-1">
+                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Grade</span>
+                                        <span className="font-medium text-slate-700">{result.grade || "-"}</span>
+                                      </div>
+                                    </div>
+                                    <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
+                                      {user.role !== "student" && result.student?.guardian?.phone && (result.marksObtained !== undefined && result.marksObtained !== null || result.isAbsent) && (
+                                        <button title="Send Marks Notification" onClick={() => handleSendNotification(result)} className="grid h-9 w-9 place-items-center rounded-md border border-[#25D366] text-[#25D366] hover:bg-[#25D366] hover:text-white transition-colors">
+                                          <MessageCircle size={16} />
+                                        </button>
+                                      )}
+                                      {canEdit && (
+                                        <IconButton label="Edit" onClick={() => setEditing(result)}>
+                                          <Pencil size={16} />
+                                        </IconButton>
+                                      )}
+                                      {canEdit && (
+                                        <IconButton label="Delete" onClick={() => remove(result)}>
+                                          <Trash2 size={16} />
+                                        </IconButton>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    // Specialized Card for Teachers
+                    if (actualKey === "teachers") {
+                      return (
+                        <div key={item._id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between gap-4">
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+                              <div>
+                                <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 mb-1">
+                                  {item.employeeId}
+                                </span>
+                                <h3 className="font-bold text-ink text-base">{item.user?.name || item.name}</h3>
+                                <p className="text-xs text-slate-500 font-medium">{item.qualification || "Faculty Member"}</p>
+                              </div>
+                              {config.bulkDelete && canEdit && (
+                                <div onClick={e => e.stopPropagation()}>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={selectedItems.includes(item._id)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) setSelectedItems(prev => [...prev, item._id]);
+                                      else setSelectedItems(prev => prev.filter(id => id !== item._id));
+                                    }}
+                                    className="rounded border-slate-300 text-brand focus:ring-brand"
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-100">
+                                <span className="text-slate-400 text-[10px] font-semibold uppercase block mb-0.5">Experience</span>
+                                <span className="font-semibold text-slate-700">{item.experienceYears ? `${item.experienceYears} Years` : "N/A"}</span>
+                              </div>
+                              <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-100">
+                                <span className="text-slate-400 text-[10px] font-semibold uppercase block mb-0.5">Batches</span>
+                                <span className="font-semibold text-slate-700">{Array.isArray(item.batches) ? `${item.batches.length} Assigned` : "N/A"}</span>
+                              </div>
+                            </div>
+
+                            {item.user?.phone && (
+                              <div className="text-xs text-slate-600 flex items-center gap-1.5 pt-0.5">
+                                <span className="font-semibold text-slate-400">Phone:</span> {item.user.phone}
                               </div>
                             )}
-                            {actualKey === "results" && (
-                              <div className="flex justify-between mt-1 pt-2 border-t border-slate-100">
-                                <span className="text-slate-600 font-medium">{item.results.length} tests taken</span>
+
+                            {/* Credentials Info Note */}
+                            <div className="rounded-lg bg-amber-50/80 border border-amber-200/80 p-2.5 text-[11px] text-amber-800 space-y-1">
+                              <div className="font-bold flex items-center gap-1 text-amber-900">
+                                <KeyRound size={13} /> Initial Login Credentials:
                               </div>
+                              <div>Username: <code className="font-mono font-bold bg-amber-100 px-1 rounded">{item.employeeId}</code></div>
+                              <div>Password: <code className="font-mono font-bold bg-amber-100 px-1 rounded">First Name</code></div>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100" onClick={e => e.stopPropagation()}>
+                            <IconButton label="View profile" onClick={() => navigate(`/teachers/${item._id}`)}>
+                              <Eye size={16} />
+                            </IconButton>
+                            {canEdit && hasMutationPermission(item) && (
+                              <IconButton label="Edit" onClick={() => setEditing(item)}>
+                                <Pencil size={16} />
+                              </IconButton>
+                            )}
+                            {canEdit && hasMutationPermission(item) && (
+                              <IconButton label="Delete" onClick={() => remove(item)}>
+                                <Trash2 size={16} />
+                              </IconButton>
                             )}
                           </div>
                         </div>
-                        {/* Expanded Children Cards */}
-                        {isExpanded && (
-                          <div className="bg-slate-50/50 p-2 border-t border-slate-100 flex flex-col gap-2">
-                            {actualKey === "monthly-fees" && item.fees.map((fee, index) => {
-                              const isMostRecent = index === item.fees.length - 1;
-                              const rowStyle = isMostRecent ? "bg-blue-100/80 border-blue-200"
-                                       : fee.status === "paid" ? "bg-emerald-100/80 border-emerald-200"
-                                       : fee.status === "partial" ? "bg-amber-100/80 border-amber-200"
-                                       : fee.status === "future" ? "bg-slate-100/80 border-slate-200"
-                                       : "bg-rose-100/80 border-rose-200";
-                              return (
-                                <div key={fee._id} className={`p-3 rounded border ${rowStyle}`} onClick={() => setSelectedItem(fee)}>
-                                  <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-xs mb-2">
-                                    <div className="flex flex-col">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Period Start</span>
-                                      <span className="font-medium text-slate-700">{date(fee.periodStart)}</span>
-                                    </div>
-                                    <div className="flex flex-col">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Period End</span>
-                                      <span className="font-medium text-slate-700">{date(fee.periodEnd)}</span>
-                                    </div>
-                                    <div className="flex flex-col mt-1">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Total</span>
-                                      <span className="font-medium text-slate-700">{money(fee.status === 'partial' ? fee.balance : fee.totalAmount)}</span>
-                                    </div>
-                                    <div className="flex flex-col mt-1">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Status</span>
-                                      <span className="font-medium"><Cell value={fee.status} label="Status" /></span>
-                                    </div>
-                                  </div>
-                                  <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
-                                    {user.role !== "student" && fee.status !== "paid" && (
-                                      <IconButton label="Collect fee" onClick={() => setCollecting(fee)}>
-                                        <IndianRupee size={16} />
-                                      </IconButton>
-                                    )}
-                                    {user.role !== "student" && fee.status !== "paid" && fee.student?.guardian?.phone && (
-                                      <button title="Send Fee Reminder" onClick={() => handleSendNotification(fee)} className="grid h-9 w-9 place-items-center rounded-md border border-[#25D366] text-[#25D366] hover:bg-[#25D366] hover:text-white transition-colors">
-                                        <MessageCircle size={16} />
-                                      </button>
-                                    )}
-                                    <IconButton label="View Ledger" onClick={() => navigate(`/students/${fee.student._id || fee.student}`)}>
-                                      <Briefcase size={16} />
-                                    </IconButton>
-                                  </div>
+                      );
+                    }
+
+                    // Specialized Card for Students
+                    if (actualKey === "students") {
+                      return (
+                        <div key={item._id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between gap-4">
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+                              <div>
+                                <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 mb-1">
+                                  {item.studentId}
+                                </span>
+                                <h3 className="font-bold text-ink text-base">{item.user?.name || item.name}</h3>
+                                <p className="text-xs text-slate-500 font-medium">Batch: <span className="font-semibold text-slate-700">{item.batch?.name || "Unassigned"}</span></p>
+                              </div>
+                              {config.bulkDelete && canEdit && (
+                                <div onClick={e => e.stopPropagation()}>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={selectedItems.includes(item._id)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) setSelectedItems(prev => [...prev, item._id]);
+                                      else setSelectedItems(prev => prev.filter(id => id !== item._id));
+                                    }}
+                                    className="rounded border-slate-300 text-brand focus:ring-brand"
+                                  />
                                 </div>
-                              );
-                            })}
-                            {actualKey === "results" && item.results.map((result) => {
-                              return (
-                                <div key={result._id} className="p-3 rounded border bg-white border-slate-200" onClick={() => setSelectedItem(result)}>
-                                  <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-xs mb-2">
-                                    <div className="flex flex-col">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Test</span>
-                                      <span className="font-medium text-slate-700">{result.test?.title}</span>
-                                    </div>
-                                    <div className="flex flex-col">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Date</span>
-                                      <span className="font-medium text-slate-700">{date(result.test?.testDate)}</span>
-                                    </div>
-                                    <div className="flex flex-col">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Marks</span>
-                                      <span className="font-medium text-slate-700">{result.marksObtained} / {result.test?.maxMarks}</span>
-                                    </div>
-                                    <div className="flex flex-col mt-1">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Percentage</span>
-                                      <span className="font-medium text-slate-700">{result.percentage != null ? result.percentage.toFixed(1) + "%" : "-"}</span>
-                                    </div>
-                                    <div className="flex flex-col mt-1">
-                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Grade</span>
-                                      <span className="font-medium text-slate-700">{result.grade || "-"}</span>
-                                    </div>
-                                  </div>
-                                  <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
-                                    {user.role !== "student" && result.student?.guardian?.phone && (result.marksObtained !== undefined && result.marksObtained !== null || result.isAbsent) && (
-                                      <button title="Send Marks Notification" onClick={() => handleSendNotification(result)} className="grid h-9 w-9 place-items-center rounded-md border border-[#25D366] text-[#25D366] hover:bg-[#25D366] hover:text-white transition-colors">
-                                        <MessageCircle size={16} />
-                                      </button>
-                                    )}
-                                    {canEdit && (
-                                      <IconButton label="Edit" onClick={() => setEditing(result)}>
-                                        <Pencil size={16} />
-                                      </IconButton>
-                                    )}
-                                    {canEdit && (
-                                      <IconButton label="Delete" onClick={() => remove(result)}>
-                                        <Trash2 size={16} />
-                                      </IconButton>
-                                    )}
-                                  </div>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-100">
+                                <span className="text-slate-400 text-[10px] font-semibold uppercase block mb-0.5">Status</span>
+                                <Cell value={item.status} label="Status" />
+                              </div>
+                              {user.role !== "teacher" && (
+                                <div className="bg-slate-50/80 rounded-lg p-2.5 border border-slate-100">
+                                  <span className="text-slate-400 text-[10px] font-semibold uppercase block mb-0.5">Monthly Fee</span>
+                                  <span className="font-semibold text-slate-700">{item.monthlyFee ? money(item.monthlyFee) : "N/A"}</span>
                                 </div>
-                              );
-                            })}
+                              )}
+                            </div>
+
+                            {item.guardian?.name && (
+                              <div className="text-xs text-slate-600 space-y-0.5 bg-slate-50/60 p-2.5 rounded-lg border border-slate-100">
+                                <span className="text-slate-400 text-[10px] font-bold uppercase block">Guardian Info</span>
+                                <div className="font-medium text-slate-700">{item.guardian.name} ({item.guardian.relation || "Parent"})</div>
+                                {item.guardian.phone && <div className="text-slate-500 text-[11px]">📞 {item.guardian.phone}</div>}
+                              </div>
+                            )}
                           </div>
-                        )}
+
+                          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100" onClick={e => e.stopPropagation()}>
+                            <IconButton label="View profile" onClick={() => navigate(`/students/${item._id}`)}>
+                              <Eye size={16} />
+                            </IconButton>
+                            {canEdit && hasMutationPermission(item) && (
+                              <IconButton label="Edit" onClick={() => setEditing(item)}>
+                                <Pencil size={16} />
+                              </IconButton>
+                            )}
+                            {canEdit && hasMutationPermission(item) && (
+                              <IconButton label="Delete" onClick={() => remove(item)}>
+                                <Trash2 size={16} />
+                              </IconButton>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Default Generic Card for other resources
+                    let rowStyle = "bg-white hover:bg-slate-50";
+                    const mainCol = config.columns[0];
+                    const mainVal = getPath(item, mainCol[0]);
+                    
+                    return (
+                      <div 
+                        key={item._id} 
+                        className={`p-5 rounded-xl border border-slate-200 bg-white shadow-sm space-y-3 cursor-pointer transition-all hover:shadow-md ${selectedItem?._id === item._id ? 'bg-slate-50 border-brand/40' : rowStyle}`} 
+                        onClick={() => setSelectedItem(item)}
+                      >
+                        <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                          <span className="font-bold text-ink text-sm"><Cell value={mainVal} label={mainCol[1]} /></span>
+                          {config.bulkDelete && canEdit && (
+                            <div onClick={e => e.stopPropagation()}>
+                              <input 
+                                type="checkbox" 
+                                checked={selectedItems.includes(item._id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) setSelectedItems(prev => [...prev, item._id]);
+                                  else setSelectedItems(prev => prev.filter(id => id !== item._id));
+                                }}
+                                className="rounded border-slate-300 text-brand focus:ring-brand"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-xs">
+                          {config.columns.slice(1).map(([path, label]) => (
+                            <div key={path} className="flex flex-col">
+                              <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">{label}</span>
+                              <span className="font-medium text-slate-700"><Cell value={getPath(item, path)} label={label} /></span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
+                          {actualKey === "tests" && (user.role === "admin" || user.role === "teacher") && (
+                            <IconButton label="Enter marks" onClick={() => setEnteringMarks(item)}>
+                              <ClipboardEdit size={16} />
+                            </IconButton>
+                          )}
+                          {(actualKey === "students" || actualKey === "teachers") && (
+                            <IconButton label="View profile" onClick={() => navigate(`/${actualKey}/${item.student?._id || item._id}`)}>
+                              <Eye size={16} />
+                            </IconButton>
+                          )}
+                          {actualKey === "study-materials" && item.fileUrl && (
+                            <IconButton label="Download" onClick={() => window.open(toFileUrl(item.fileUrl), "_blank")}>
+                              <Download size={16} />
+                            </IconButton>
+                          )}
+                          {canEdit && hasMutationPermission(item) && (
+                            <IconButton label="Edit" onClick={() => setEditing(item)}>
+                              <Pencil size={16} />
+                            </IconButton>
+                          )}
+                          {canEdit && hasMutationPermission(item) && (
+                            <IconButton label="Delete" onClick={() => remove(item)}>
+                              <Trash2 size={16} />
+                            </IconButton>
+                          )}
+                        </div>
                       </div>
                     );
-                  }
-
-                  let rowStyle = "bg-white hover:bg-slate-50";
-                  
-                  const mainCol = config.columns[0];
-                  const mainVal = getPath(item, mainCol[0]);
-                  
-                  return (
-                    <div 
-                      key={item._id} 
-                      className={`p-4 border-b space-y-3 cursor-pointer transition-colors ${selectedItem?._id === item._id ? 'bg-slate-100' : rowStyle}`} 
-                      onClick={() => setSelectedItem(item)}
-                    >
-                      <div className="flex justify-between items-center pb-2 border-b border-black/5">
-                        <span className="font-bold text-ink text-sm"><Cell value={mainVal} label={mainCol[1]} /></span>
-                        {config.bulkDelete && canEdit && (
-                          <div onClick={e => e.stopPropagation()}>
-                            <input 
-                              type="checkbox" 
-                              checked={selectedItems.includes(item._id)}
-                              onChange={(e) => {
-                                if (e.target.checked) setSelectedItems(prev => [...prev, item._id]);
-                                else setSelectedItems(prev => prev.filter(id => id !== item._id));
-                              }}
-                              className="rounded border-slate-300 text-brand focus:ring-brand"
-                            />
-                          </div>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-xs">
-                        {config.columns.slice(1).map(([path, label]) => (
-                          <div key={path} className="flex flex-col">
-                            <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">{label}</span>
-                            <span className="font-medium text-slate-700"><Cell value={getPath(item, path)} label={label} /></span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={(e) => e.stopPropagation()}>
-                        {actualKey === "tests" && (user.role === "admin" || user.role === "teacher") && (
-                          <IconButton label="Enter marks" onClick={() => setEnteringMarks(item)}>
-                            <ClipboardEdit size={16} />
-                          </IconButton>
-                        )}
-                        {(actualKey === "students" || actualKey === "teachers") && (
-                          <IconButton label="View profile" onClick={() => navigate(`/${actualKey}/${item.student?._id || item._id}`)}>
-                            <Eye size={16} />
-                          </IconButton>
-                        )}
-                        {actualKey === "study-materials" && item.fileUrl && (
-                          <IconButton label="Download" onClick={() => window.open(toFileUrl(item.fileUrl), "_blank")}>
-                            <Download size={16} />
-                          </IconButton>
-                        )}
-                        {canEdit && hasMutationPermission(item) && (
-                          <IconButton label="Edit" onClick={() => setEditing(item)}>
-                            <Pencil size={16} />
-                          </IconButton>
-                        )}
-                        {canEdit && hasMutationPermission(item) && (
-                          <IconButton label="Delete" onClick={() => remove(item)}>
-                            <Trash2 size={16} />
-                          </IconButton>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Desktop Table View */}
-              <div className="hidden md:block overflow-x-auto kc-scrollbar">
+                  })}
+                </div>
+              ) : (
+                /* Desktop Table View */
+                <div className="overflow-x-auto kc-scrollbar rounded-md border border-slate-200 bg-white">
                 <table className="min-w-full divide-y divide-slate-200 text-xs md:text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
@@ -885,6 +1049,7 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
                 </tbody>
               </table>
             </div>
+            )}
             </>
           </div>
           {actualKey === "batches" && selectedItem && (
