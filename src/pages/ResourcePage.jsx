@@ -488,15 +488,140 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
         <div className="flex flex-col lg:flex-row gap-5 items-start">
           <div className="flex-1 w-full">
             <>
+              {/* Mobile-Only Summary Bar for Monthly Fees */}
+              {actualKey === "monthly-fees" && (
+                <div className="sm:hidden grid grid-cols-2 gap-2 mb-4">
+                  <div className="bg-emerald-600 text-white rounded-xl p-3.5 shadow-sm flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider opacity-90">Total Collected</span>
+                    <span className="text-lg font-black mt-1">{money(items.reduce((acc, f) => acc + (f.payments?.filter(p => !p.status || p.status === 'active').reduce((s, p) => s + p.amount, 0) || 0), 0))}</span>
+                  </div>
+                  <div className="bg-rose-600 text-white rounded-xl p-3.5 shadow-sm flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider opacity-90">Total Outstanding</span>
+                    <span className="text-lg font-black mt-1">{money(groupedItems.reduce((acc, g) => acc + g.totalDue, 0))}</span>
+                  </div>
+                </div>
+              )}
+
               {/* Grid / Cards View (with gap between card components) */}
               {viewMode === "grid" ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
                   {groupedItems.map((item) => {
                     if (item.isGroup) {
                       const isExpanded = expandedGroup === item._id;
+
+                      // Specialized Mobile Card for Monthly Fees (Responsive for phones)
+                      if (actualKey === "monthly-fees") {
+                        const unpaidFee = item.fees.find(f => f.status !== "paid");
+                        return (
+                          <div key={item._id} className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all space-y-3">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h3 className="font-extrabold text-ink text-base tracking-tight">{item.studentName}</h3>
+                                <p className="text-xs text-slate-500 font-medium mt-0.5">Batch: <span className="text-slate-700 font-semibold">{item.batchName}</span></p>
+                              </div>
+                              <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200">
+                                {item.fees?.length || 0} Tenures
+                              </span>
+                            </div>
+
+                            {/* Hero Financial Status Banner */}
+                            {item.totalDue > 0 ? (
+                              <div className="bg-rose-50/80 border border-rose-200/80 rounded-xl p-3 flex items-center justify-between gap-2">
+                                <div>
+                                  <span className="text-[10px] uppercase font-bold text-rose-700 tracking-wider block">Outstanding Due</span>
+                                  <span className="text-base font-black text-rose-700">{money(item.totalDue)}</span>
+                                  <span className="text-[11px] text-slate-500 block font-medium">Paid: {money(item.totalPaid)}</span>
+                                </div>
+                                {user.role !== "student" && unpaidFee && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCollecting(unpaidFee)}
+                                    className="h-10 px-3.5 bg-rose-600 text-white font-bold text-xs rounded-xl shadow-xs hover:bg-rose-700 active:scale-95 transition-all flex items-center gap-1 shrink-0"
+                                  >
+                                    <IndianRupee size={15} /> Collect
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="bg-emerald-50/80 border border-emerald-200/80 rounded-xl p-3 flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] uppercase font-bold text-emerald-700 tracking-wider block font-semibold">Account Status</span>
+                                  <span className="text-xs font-bold text-emerald-700 flex items-center gap-1 mt-0.5">
+                                    ✓ All Fees Paid ({money(item.totalPaid)})
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Clean History Toggle */}
+                            <button
+                              type="button"
+                              onClick={() => setExpandedGroup(isExpanded ? null : item._id)}
+                              className="w-full py-2 px-3 bg-slate-50 hover:bg-slate-100/80 rounded-xl text-xs font-bold text-slate-600 flex items-center justify-between transition-colors border border-slate-200/60"
+                            >
+                              <span>{isExpanded ? "Hide Monthly Breakdown" : "View Monthly History"}</span>
+                              {isExpanded ? <ChevronUp size={16} className="text-brand" /> : <ChevronDown size={16} className="text-slate-400" />}
+                            </button>
+
+                            {/* Expanded Monthly Rows (Clean Mobile Timeline) */}
+                            {isExpanded && (
+                              <div className="space-y-2 pt-2 border-t border-slate-100">
+                                {item.fees.map((fee) => {
+                                  const activePayments = fee.payments?.filter(p => !p.status || p.status === 'active') || [];
+                                  const paid = activePayments.reduce((sum, p) => sum + p.amount, 0);
+                                  const due = (fee.totalAmount - (fee.discount || 0)) - paid;
+                                  return (
+                                    <div key={fee._id} className="p-3 rounded-xl border border-slate-200/70 bg-slate-50/60 space-y-2 text-xs">
+                                      <div className="flex justify-between items-center">
+                                        <span className="font-bold text-slate-800">{date(fee.periodStart)} – {date(fee.periodEnd)}</span>
+                                        <Cell value={fee.status} label="Status" />
+                                      </div>
+
+                                      <div className="flex justify-between text-slate-600 text-[11px]">
+                                        <span>Fee: <strong className="text-slate-700">{money(fee.totalAmount)}</strong></span>
+                                        <span>Paid: <strong className="text-emerald-700">{money(paid)}</strong></span>
+                                        <span>Due: <strong className={due > 0 ? "text-rose-600" : "text-slate-700"}>{money(due > 0 ? due : 0)}</strong></span>
+                                      </div>
+
+                                      <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-200/50">
+                                        {user.role !== "student" && fee.status !== "paid" && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); setCollecting(fee); }}
+                                            className="h-8 px-3 bg-brand text-white font-bold text-xs rounded-lg shadow-xs hover:bg-teal-800 flex items-center gap-1"
+                                          >
+                                            <IndianRupee size={13} /> Collect
+                                          </button>
+                                        )}
+                                        {user.role !== "student" && fee.status !== "paid" && fee.student?.guardian?.phone && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleSendNotification(fee); }}
+                                            className="h-8 px-2.5 border border-[#25D366] text-[#25D366] font-bold text-xs rounded-lg bg-white hover:bg-[#25D366] hover:text-white flex items-center gap-1"
+                                          >
+                                            <MessageCircle size={13} /> Reminder
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); navigate(`/students/${fee.student._id || fee.student}`); }}
+                                          className="h-8 px-2.5 border border-slate-300 text-slate-700 font-bold text-xs rounded-lg bg-white hover:bg-slate-100 flex items-center gap-1"
+                                        >
+                                          <Briefcase size={13} /> Ledger
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
                       return (
                         <div key={item._id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all space-y-3">
-                          {/* Parent Card */}
+                          {/* Parent Card for Results */}
                           <div 
                             className={`cursor-pointer transition-colors p-3 rounded-lg border ${isExpanded ? 'bg-slate-50 border-brand/20' : 'bg-white border-slate-100 hover:bg-slate-50/80'}`}
                             onClick={() => setExpandedGroup(isExpanded ? null : item._id)}
@@ -504,139 +629,57 @@ export const ResourcePage = ({ resourceKey, embed = false }) => {
                             <div className="flex justify-between items-center mb-1.5">
                               <h3 className="font-bold text-ink text-base flex items-center gap-1.5">{item.studentName}</h3>
                               <div className="flex items-center gap-1">
-                                <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{item.fees?.length || 0} Tenures</span>
+                                <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{item.results?.length || 0} Tests</span>
                                 {isExpanded ? <ChevronUp size={20} className="text-brand" /> : <ChevronDown size={20} className="text-slate-400" />}
                               </div>
                             </div>
-                            <div className="flex flex-col gap-2 text-xs">
+                            <div className="flex flex-col gap-1 text-xs">
                               <span className="text-slate-500">Batch: <span className="font-semibold text-slate-700">{item.batchName}</span></span>
-                              {actualKey === "monthly-fees" && (
-                                <div className="grid grid-cols-2 gap-2 mt-1 pt-2 border-t border-slate-200/60">
-                                  <div className="bg-emerald-50 border border-emerald-200/60 rounded-lg p-2 flex flex-col">
-                                    <span className="text-[10px] uppercase font-bold text-emerald-700 tracking-wider">Paid</span>
-                                    <span className="text-sm font-extrabold text-emerald-700">{money(item.totalPaid)}</span>
-                                  </div>
-                                  <div className={`rounded-lg p-2 flex flex-col border ${item.totalDue > 0 ? 'bg-rose-50 border-rose-200/60 text-rose-700' : 'bg-slate-50 border-slate-200/60 text-slate-600'}`}>
-                                    <span className="text-[10px] uppercase font-bold tracking-wider opacity-80">Outstanding Due</span>
-                                    <span className="text-sm font-extrabold">{money(item.totalDue)}</span>
-                                  </div>
-                                </div>
-                              )}
-                              {actualKey === "results" && (
-                                <div className="flex justify-between mt-1 pt-2 border-t border-slate-100">
-                                  <span className="text-slate-600 font-medium">{item.results.length} tests taken</span>
-                                </div>
-                              )}
+                              <span className="text-slate-600 font-medium">{item.results.length} tests taken</span>
                             </div>
                           </div>
-                          {/* Expanded Children Cards */}
+                          {/* Expanded Children Cards for Results */}
                           {isExpanded && (
                             <div className="bg-slate-50/70 p-2.5 border-t border-slate-200/70 flex flex-col gap-3 rounded-lg">
-                              {actualKey === "monthly-fees" && item.fees.map((fee, index) => {
-                                const isMostRecent = index === item.fees.length - 1;
-                                const rowStyle = isMostRecent ? "bg-blue-50/90 border-blue-200"
-                                         : fee.status === "paid" ? "bg-emerald-50/90 border-emerald-200"
-                                         : fee.status === "partial" ? "bg-amber-50/90 border-amber-200"
-                                         : fee.status === "future" ? "bg-slate-50/90 border-slate-200"
-                                         : "bg-rose-50/90 border-rose-200";
-                                return (
-                                  <div key={fee._id} className={`p-3.5 rounded-xl border ${rowStyle} space-y-3 shadow-xs`} onClick={() => setSelectedItem(fee)}>
-                                    <div className="flex justify-between items-start border-b border-black/5 pb-2">
-                                      <div className="flex flex-col">
-                                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Period</span>
-                                        <span className="text-xs font-bold text-slate-800">{date(fee.periodStart)} – {date(fee.periodEnd)}</span>
-                                      </div>
-                                      <Cell value={fee.status} label="Status" />
+                              {item.results.map((result) => (
+                                <div key={result._id} className="p-3 rounded-lg border bg-white border-slate-200 shadow-xs" onClick={() => setSelectedItem(result)}>
+                                  <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-xs mb-2">
+                                    <div className="flex flex-col">
+                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Test</span>
+                                      <span className="font-medium text-slate-700">{result.test?.title}</span>
                                     </div>
-                                    
-                                    <div className="grid grid-cols-2 gap-2 text-xs">
-                                      <div className="bg-white/70 rounded-lg p-2 border border-black/5 flex flex-col">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">Total Amount</span>
-                                        <span className="font-bold text-slate-800">{money(fee.totalAmount)}</span>
-                                      </div>
-                                      <div className="bg-white/70 rounded-lg p-2 border border-black/5 flex flex-col">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold text-[10px]">Balance Due</span>
-                                        <span className={`font-bold ${fee.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{money(fee.status === 'partial' ? fee.balance : (fee.status === 'paid' ? 0 : fee.totalAmount))}</span>
-                                      </div>
+                                    <div className="flex flex-col">
+                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Date</span>
+                                      <span className="font-medium text-slate-700">{date(result.test?.testDate)}</span>
                                     </div>
-
-                                    {/* Mobile Responsive Action Bar */}
-                                    <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
-                                      {user.role !== "student" && fee.status !== "paid" && (
-                                        <button
-                                          type="button"
-                                          onClick={() => setCollecting(fee)}
-                                          className="flex-1 sm:flex-initial inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-brand px-3 text-xs font-bold text-white shadow-xs hover:bg-teal-800 active:scale-[0.98] transition-all"
-                                        >
-                                          <IndianRupee size={15} /> Collect Fee
-                                        </button>
-                                      )}
-                                      {user.role !== "student" && fee.status !== "paid" && fee.student?.guardian?.phone && (
-                                        <button
-                                          type="button"
-                                          title="Send Fee Reminder"
-                                          onClick={() => handleSendNotification(fee)}
-                                          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[#25D366] bg-white px-3 text-xs font-bold text-[#25D366] hover:bg-[#25D366] hover:text-white transition-all"
-                                        >
-                                          <MessageCircle size={15} /> <span className="hidden xs:inline">WhatsApp</span>
-                                        </button>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => navigate(`/students/${fee.student._id || fee.student}`)}
-                                        className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-all"
-                                      >
-                                        <Briefcase size={15} /> Ledger
+                                    <div className="flex flex-col">
+                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Marks</span>
+                                      <span className="font-medium text-slate-700">{result.marksObtained} / {result.test?.maxMarks}</span>
+                                    </div>
+                                    <div className="flex flex-col mt-1">
+                                      <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Grade</span>
+                                      <span className="font-medium text-slate-700">{result.grade || "-"}</span>
+                                    </div>
+                                  </div>
+                                  <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
+                                    {user.role !== "student" && result.student?.guardian?.phone && (result.marksObtained !== undefined && result.marksObtained !== null || result.isAbsent) && (
+                                      <button title="Send Marks Notification" onClick={() => handleSendNotification(result)} className="grid h-9 w-9 place-items-center rounded-md border border-[#25D366] text-[#25D366] hover:bg-[#25D366] hover:text-white transition-colors">
+                                        <MessageCircle size={16} />
                                       </button>
-                                    </div>
+                                    )}
+                                    {canEdit && (
+                                      <IconButton label="Edit" onClick={() => setEditing(result)}>
+                                        <Pencil size={16} />
+                                      </IconButton>
+                                    )}
+                                    {canEdit && (
+                                      <IconButton label="Delete" onClick={() => remove(result)}>
+                                        <Trash2 size={16} />
+                                      </IconButton>
+                                    )}
                                   </div>
-                                );
-                              })}
-                              {actualKey === "results" && item.results.map((result) => {
-                                return (
-                                  <div key={result._id} className="p-3 rounded-lg border bg-white border-slate-200 shadow-sm" onClick={() => setSelectedItem(result)}>
-                                    <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-xs mb-2">
-                                      <div className="flex flex-col">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Test</span>
-                                        <span className="font-medium text-slate-700">{result.test?.title}</span>
-                                      </div>
-                                      <div className="flex flex-col">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Date</span>
-                                        <span className="font-medium text-slate-700">{date(result.test?.testDate)}</span>
-                                      </div>
-                                      <div className="flex flex-col">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Marks</span>
-                                        <span className="font-medium text-slate-700">{result.marksObtained} / {result.test?.maxMarks}</span>
-                                      </div>
-                                      <div className="flex flex-col mt-1">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Percentage</span>
-                                        <span className="font-medium text-slate-700">{result.percentage != null ? result.percentage.toFixed(1) + "%" : "-"}</span>
-                                      </div>
-                                      <div className="flex flex-col mt-1">
-                                        <span className="text-slate-400 uppercase tracking-wider font-semibold mb-0.5 text-[10px]">Grade</span>
-                                        <span className="font-medium text-slate-700">{result.grade || "-"}</span>
-                                      </div>
-                                    </div>
-                                    <div className="flex justify-end gap-2 pt-2 border-t border-black/5" onClick={e => e.stopPropagation()}>
-                                      {user.role !== "student" && result.student?.guardian?.phone && (result.marksObtained !== undefined && result.marksObtained !== null || result.isAbsent) && (
-                                        <button title="Send Marks Notification" onClick={() => handleSendNotification(result)} className="grid h-9 w-9 place-items-center rounded-md border border-[#25D366] text-[#25D366] hover:bg-[#25D366] hover:text-white transition-colors">
-                                          <MessageCircle size={16} />
-                                        </button>
-                                      )}
-                                      {canEdit && (
-                                        <IconButton label="Edit" onClick={() => setEditing(result)}>
-                                          <Pencil size={16} />
-                                        </IconButton>
-                                      )}
-                                      {canEdit && (
-                                        <IconButton label="Delete" onClick={() => remove(result)}>
-                                          <Trash2 size={16} />
-                                        </IconButton>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
