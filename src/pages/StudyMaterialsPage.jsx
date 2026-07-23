@@ -12,11 +12,25 @@ import { WhatsAppPreviewModal } from "../components/WhatsAppPreviewModal.jsx";
 import { WhatsAppBulkModal } from "../components/WhatsAppBulkModal.jsx";
 import { date as formatDate } from "../utils/format.js";
 import { useSearchParams } from "react-router-dom";
+import { historyService } from "../services/historyService.js";
+import { downloadService } from "../services/downloadService.js";
+import { fileOpenerService } from "../services/fileOpenerService.js";
+import { DuplicateDownloadModal } from "../components/DuplicateDownloadModal.jsx";
 
 export const StudyMaterialsPage = () => {
   const { user } = useAuth();
   const role = user?.role || "student";
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Download Manager States
+  const [downloadHistoryMap, setDownloadHistoryMap] = useState({});
+  const [downloadProgress, setDownloadProgress] = useState({});
+  const [duplicateModal, setDuplicateModal] = useState({
+    isOpen: false,
+    materialItem: null,
+    fileObj: null,
+    filename: "",
+  });
 
   // State for Listing
   const [materials, setMaterials] = useState([]);
@@ -417,10 +431,108 @@ export const StudyMaterialsPage = () => {
     }
   };
 
-  // Copy Direct link direct trigger or backend link redirect
-  const getDirectDownloadLink = (materialId, fileUrl) => {
-    const token = localStorage.getItem("kc_token") || "";
-    return `${API_URL}/study-materials/${materialId}/download?fileUrl=${encodeURIComponent(fileUrl)}&token=${token}`;
+  // Refresh Download History Effect
+  const refreshDownloadHistory = async () => {
+    const history = await historyService.getHistory();
+    const map = {};
+    history.forEach((rec) => {
+      const key = `${rec.materialId}_${rec.fileId || rec.filename}`;
+      map[key] = rec;
+    });
+    setDownloadHistoryMap(map);
+  };
+
+  useEffect(() => {
+    refreshDownloadHistory();
+  }, []);
+
+  const handleInitiateDownload = async (materialItem, fileObj, forceReDownload = false) => {
+    const fileId = fileObj.url || fileObj.name;
+    const key = `${materialItem._id}_${fileId}`;
+
+    const existing = downloadHistoryMap[key];
+    if (existing && !forceReDownload) {
+      setDuplicateModal({
+        isOpen: true,
+        materialItem,
+        fileObj,
+        filename: existing.filename || fileObj.name,
+      });
+      return;
+    }
+
+    setDuplicateModal({ isOpen: false, materialItem: null, fileObj: null, filename: "" });
+    setDownloadProgress((prev) => ({ ...prev, [key]: 1 }));
+
+    try {
+      await downloadService.downloadMaterialFile({
+        materialId: materialItem._id,
+        fileId,
+        title: materialItem.title,
+        fileUrl: fileObj.url,
+        originalFilename: fileObj.name,
+        mimeType: fileObj.mimeType,
+        onProgress: (percent) => {
+          setDownloadProgress((prev) => ({ ...prev, [key]: percent }));
+        },
+      });
+
+      showToast(`Downloaded ${fileObj.name} successfully!`, "success");
+      await refreshDownloadHistory();
+    } catch (err) {
+      showToast(err.message || "Failed to download material", "error");
+    } finally {
+      setDownloadProgress((prev) => {
+        const copy = { ...prev };
+        delete copy[key];
+        return copy;
+      });
+    }
+  };
+
+  const handleOpenLocal = async (materialId, fileId, filename) => {
+    const key = `${materialId}_${fileId}`;
+    const record = downloadHistoryMap[key];
+    if (!record) {
+      showToast("Local copy not found. Please download again.", "error");
+      return;
+    }
+
+    try {
+      await fileOpenerService.openLocalFile({
+        localPath: record.localPath,
+        filename: record.filename || filename,
+        mimeType: record.mimeType,
+      });
+    } catch (err) {
+      showToast(err.message || "Could not open local file.", "error");
+    }
+  };
+
+  const handleDeleteLocal = async (materialId, fileId, filename) => {
+    const key = `${materialId}_${fileId}`;
+    const record = downloadHistoryMap[key];
+    const path = record?.localPath || "";
+
+    const ok = await downloadService.deleteLocalMaterial(materialId, fileId, filename || record?.filename, path);
+    if (ok) {
+      showToast("Local copy deleted.", "success");
+      await refreshDownloadHistory();
+    } else {
+      showToast("Failed to delete local copy.", "error");
+    }
+  };
+
+  const handleShareLocal = async (materialId, fileId, title) => {
+    const key = `${materialId}_${fileId}`;
+    const record = downloadHistoryMap[key];
+    if (record) {
+      await fileOpenerService.shareLocalFile({
+        localPath: record.localPath,
+        filename: record.filename,
+        title: title || record.title,
+      });
+    }
   };
 
   // Dynamic formatting of human bytes
@@ -675,19 +787,90 @@ export const StudyMaterialsPage = () => {
                     
                     {/* Files list */}
                     {(item.files || []).length > 0 ? (
-                      <div className="space-y-1.5">
-                        {(item.files || []).slice(0, 3).map((file, fIdx) => (
-                          <a
-                            key={fIdx}
-                            href={getDirectDownloadLink(item._id, file.url)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center gap-2 text-xs text-brand hover:underline font-semibold bg-brand/5 p-1.5 rounded-lg w-full transition-colors truncate"
-                          >
-                            <FileText size={14} className="text-brand flex-shrink-0" />
-                            <span className="truncate flex-1">{file.name}</span>
-                          </a>
-                        ))}
+                      <div className="space-y-2">
+                        {(item.files || []).slice(0, 3).map((file, fIdx) => {
+                          const fileId = file.url || file.name;
+                          const key = `${item._id}_${fileId}`;
+                          const record = downloadHistoryMap[key];
+                          const progress = downloadProgress[key];
+
+                          if (progress !== undefined) {
+                            return (
+                              <div key={fIdx} className="p-2 rounded-xl bg-amber-50 border border-amber-200/80 space-y-1.5">
+                                <div className="flex items-center justify-between text-xs text-amber-800 font-bold">
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <Loader2 size={13} className="animate-spin text-amber-600 shrink-0" />
+                                    <span className="truncate">{file.name}</span>
+                                  </div>
+                                  <span className="text-[11px] shrink-0">{progress}%</span>
+                                </div>
+                                <div className="w-full bg-amber-200 h-1.5 rounded-full overflow-hidden">
+                                  <div className="bg-amber-600 h-full transition-all duration-200" style={{ width: `${progress}%` }} />
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          if (record) {
+                            return (
+                              <div key={fIdx} className="p-2 rounded-xl bg-emerald-50/70 border border-emerald-200/80 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 text-xs text-emerald-900 font-bold truncate">
+                                    <Check size={14} className="text-emerald-600 shrink-0" />
+                                    <span className="truncate">{file.name}</span>
+                                  </div>
+                                  <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-white text-emerald-700 border border-emerald-200 shrink-0">
+                                    Downloaded
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-emerald-100">
+                                  <button
+                                    onClick={() => handleOpenLocal(item._id, fileId, file.name)}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] rounded-lg shadow-2xs flex items-center gap-1 transition-all"
+                                  >
+                                    <Eye size={12} /> Open
+                                  </button>
+                                  <button
+                                    onClick={() => handleShareLocal(item._id, fileId, item.title)}
+                                    className="px-2 py-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-[11px] rounded-lg border border-slate-200 flex items-center gap-1 transition-all"
+                                    title="Share Local File"
+                                  >
+                                    <Share2 size={12} /> Share
+                                  </button>
+                                  <button
+                                    onClick={() => handleInitiateDownload(item, file, true)}
+                                    className="px-2 py-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-[11px] rounded-lg border border-slate-200 flex items-center gap-1 transition-all"
+                                    title="Download Fresh Copy"
+                                  >
+                                    <RefreshCw size={12} /> Again
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteLocal(item._id, fileId, file.name)}
+                                    className="px-2 py-1 bg-white hover:bg-rose-50 text-rose-600 font-semibold text-[11px] rounded-lg border border-rose-200 flex items-center gap-1 transition-all ml-auto"
+                                    title="Delete Local Copy"
+                                  >
+                                    <Trash2 size={12} /> Delete
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div key={fIdx} className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/60 transition-all text-xs">
+                              <div className="flex items-center gap-2 min-w-0 font-medium text-slate-700 truncate pr-2">
+                                <FileText size={14} className="text-brand shrink-0" />
+                                <span className="truncate">{file.name}</span>
+                              </div>
+                              <button
+                                onClick={() => handleInitiateDownload(item, file)}
+                                className="px-3 py-1 bg-brand text-white font-bold text-xs rounded-lg shadow-2xs hover:bg-teal-800 flex items-center gap-1.5 shrink-0 transition-all active:scale-95"
+                              >
+                                <Download size={13} /> Download
+                              </button>
+                            </div>
+                          );
+                        })}
                         {item.files?.length > 3 && (
                           <div className="text-[10px] text-slate-400 font-semibold pl-2">
                             +{item.files.length - 3} more files
@@ -1373,42 +1556,92 @@ export const StudyMaterialsPage = () => {
               <div>
                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Attached Files</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {detailItem.files.map((file, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-3 border border-slate-200 rounded-xl bg-white shadow-xs">
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <div className="p-2 bg-brand/5 border border-brand/10 text-brand rounded-lg flex-shrink-0">
-                          <FileText size={16} />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold text-slate-800 truncate" title={file.name}>
-                            {file.name}
+                  {detailItem.files.map((file, idx) => {
+                    const fileId = file.url || file.name;
+                    const key = `${detailItem._id}_${fileId}`;
+                    const record = downloadHistoryMap[key];
+                    const progress = downloadProgress[key];
+
+                    return (
+                      <div key={idx} className="p-3 border border-slate-200 rounded-xl bg-white shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div className="p-2 bg-brand/5 border border-brand/10 text-brand rounded-lg flex-shrink-0">
+                              <FileText size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-slate-800 truncate" title={file.name}>
+                                {file.name}
+                              </div>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                {formatBytes(file.size)} | {file.mimeType?.split("/")[1]?.toUpperCase()}
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            {formatBytes(file.size)} | {file.mimeType?.split("/")[1]?.toUpperCase()}
-                          </div>
+                          {record && (
+                            <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                              Downloaded
+                            </span>
+                          )}
                         </div>
+
+                        {progress !== undefined ? (
+                          <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 space-y-1">
+                            <div className="flex justify-between text-[11px] font-bold text-amber-800">
+                              <span>Downloading...</span>
+                              <span>{progress}%</span>
+                            </div>
+                            <div className="w-full bg-amber-200 h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-amber-600 h-full transition-all duration-200" style={{ width: `${progress}%` }} />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
+                            {record ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenLocal(detailItem._id, fileId, file.name)}
+                                  className="px-2.5 py-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs flex items-center gap-1 transition-all"
+                                >
+                                  <Eye size={13} /> Open
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleShareLocal(detailItem._id, fileId, detailItem.title)}
+                                  className="px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-all"
+                                >
+                                  <Share2 size={13} /> Share
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleInitiateDownload(detailItem, file, true)}
+                                  className="px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-all"
+                                >
+                                  <RefreshCw size={13} /> Download Again
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteLocal(detailItem._id, fileId, file.name)}
+                                  className="px-2.5 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg flex items-center gap-1 transition-all ml-auto"
+                                >
+                                  <Trash2 size={13} /> Delete Local
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleInitiateDownload(detailItem, file)}
+                                className="w-full py-1.5 text-xs font-bold text-white bg-brand hover:bg-teal-800 rounded-lg shadow-2xs flex items-center justify-center gap-1.5 transition-all"
+                              >
+                                <Download size={14} /> Download File
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0 pl-2">
-                        <a
-                          href={getDirectDownloadLink(detailItem._id, file.url)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="p-1.5 text-slate-500 hover:text-brand hover:bg-slate-100 rounded-lg transition-all"
-                          title="Download File"
-                        >
-                          <Download size={14} />
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyLink(getDirectDownloadLink(detailItem._id, file.url), file.name)}
-                          className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all"
-                          title="Copy Download Link"
-                        >
-                          <Copy size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1459,14 +1692,14 @@ export const StudyMaterialsPage = () => {
                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Download Tracking History</h4>
                 <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-slate-50/30 p-2">
                   {detailItem.downloadLogs.map((log, lIdx) => (
-                    <div key={lIdx} className="py-2.5 px-2 flex justify-between text-xs items-center hover:bg-slate-100/40 rounded">
-                      <div className="min-w-0 pr-4">
-                        <div className="font-bold text-slate-700 truncate">{log.userName} ({log.userRole})</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5 truncate">File: {log.fileName}</div>
+                    <div key={lIdx} className="py-2 px-3 text-xs flex items-center justify-between">
+                      <div>
+                        <span className="font-semibold text-slate-800">{log.user?.name || log.userName || "User"}</span>
+                        <span className="text-slate-400 text-[10px] block font-mono">{log.userRole || "User"}</span>
                       </div>
-                      <div className="text-[10px] text-slate-500 flex-shrink-0 font-medium">
+                      <span className="text-[11px] text-slate-500">
                         {formatDate(log.downloadedAt || log.createdAt)}
-                      </div>
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1508,6 +1741,16 @@ export const StudyMaterialsPage = () => {
           title={waBulkModal.title}
         />
       )}
+
+      {/* Duplicate Download Confirmation Modal */}
+      <DuplicateDownloadModal
+        isOpen={duplicateModal.isOpen}
+        filename={duplicateModal.filename}
+        onCancel={() => setDuplicateModal({ isOpen: false, materialItem: null, fileObj: null, filename: "" })}
+        onConfirm={() =>
+          handleInitiateDownload(duplicateModal.materialItem, duplicateModal.fileObj, true)
+        }
+      />
     </div>
   );
 };

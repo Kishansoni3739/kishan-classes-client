@@ -44,7 +44,7 @@ export const Login = () => {
     console.log(`[LOGIN PAGE] Submitting login request | Role Hint: ${activeRole} | Identifier: "${username.trim()}"`);
 
     try {
-      await login(username, password);
+      await login(username, password, activeRole);
       navigate("/");
     } catch (err) {
       console.error("[LOGIN PAGE] Login Error Details:", err);
@@ -54,11 +54,10 @@ export const Login = () => {
       } else {
         const status = err.response.status;
         const msg = err.response.data?.message;
+        const roleTitle = activeRole.charAt(0).toUpperCase() + activeRole.slice(1);
 
-        if (status === 404) {
-          setError(msg || "User account not found. Please verify your ID or username.");
-        } else if (status === 401) {
-          setError(msg || "Incorrect password. Please try again.");
+        if (status === 401 || status === 404) {
+          setError(msg || `Invalid ${roleTitle} credentials.`);
         } else if (status === 403) {
           setError(msg || "Account is inactive. Please contact administration.");
         } else if (status === 429) {
