@@ -1,7 +1,8 @@
-import { BookOpenCheck, Lock, User as UserIcon, Shield, GraduationCap, School } from "lucide-react";
+import { BookOpenCheck, Lock, User as UserIcon, Shield, GraduationCap, School, Smartphone, Download } from "lucide-react";
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
+import { Capacitor } from "@capacitor/core";
 
 export const Login = () => {
   const { login, isAuthenticated } = useAuth();
@@ -173,6 +174,22 @@ export const Login = () => {
             </button>
           </form>
         </div>
+
+        {!Capacitor.isNativePlatform() && (
+          <div className="pt-1 text-center">
+            <a
+              href={import.meta.env.VITE_ANDROID_APK_URL || "/kishan-classes.apk"}
+              download="kishan-classes.apk"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl border border-slate-200 bg-white py-3 px-4 text-sm font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:text-brand hover:border-brand/30 hover:shadow active:scale-[0.99]"
+            >
+              <Smartphone size={18} className="text-brand" />
+              <span>Download Android Application</span>
+              <Download size={16} className="text-slate-400" />
+            </a>
+          </div>
+        )}
       </div>
     </main>
   );
