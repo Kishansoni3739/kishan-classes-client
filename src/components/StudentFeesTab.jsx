@@ -659,47 +659,66 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
       )}
 
       {/* Printable Fee Statement / Ledger (Visible ONLY on print) */}
-      <div className="hidden print:block font-sans p-4 text-black bg-white space-y-5">
+      <div className="hidden print:block font-sans text-black bg-white space-y-3 print-ledger-container">
+        <style>{`
+          @media print {
+            @page {
+              size: A4 portrait;
+              margin: 8mm 10mm;
+            }
+            body {
+              background: white !important;
+              color: black !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            .page-break-avoid {
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+          }
+        `}</style>
+
         {/* Institute Header */}
-        <div className="border-b-2 border-slate-900 pb-3 flex justify-between items-end">
+        <div className="border-b-2 border-slate-900 pb-2 flex justify-between items-end page-break-avoid">
           <div>
-            <h1 className="text-2xl font-black uppercase tracking-wider text-slate-900">Kishan Classes</h1>
-            <p className="text-xs text-slate-600 font-semibold mt-0.5">Official Student Fee Statement & Ledger</p>
+            <h1 className="text-xl font-black uppercase tracking-wider text-slate-900">Kishan Classes</h1>
+            <p className="text-[11px] text-slate-600 font-semibold mt-0.5">Official Student Fee Statement & Ledger</p>
           </div>
-          <div className="text-right text-xs text-slate-600">
+          <div className="text-right text-[11px] text-slate-600">
             <p className="font-bold text-slate-800">Date Generated:</p>
             <p className="font-medium">{new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
           </div>
         </div>
 
         {/* Student Information Box */}
-        <div className="bg-slate-50 border border-slate-300 rounded-lg p-3.5">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-2 border-b border-slate-200 pb-1">
+        <div className="bg-slate-50 border border-slate-300 rounded-md p-2.5 page-break-avoid">
+          <h2 className="text-[10px] font-bold uppercase tracking-wider text-slate-700 mb-1.5 border-b border-slate-200 pb-0.5">
             Student & Admission Details
           </h2>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
             <div>
-              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Student Name: </span>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px]">Student Name: </span>
               <span className="font-bold text-slate-900">{student?.user?.name || student?.name || "-"}</span>
             </div>
             <div>
-              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Student ID: </span>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px]">Student ID: </span>
               <span className="font-bold text-slate-900">{student?.studentId || "-"}</span>
             </div>
             <div>
-              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Guardian: </span>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px]">Guardian: </span>
               <span className="font-bold text-slate-900">{student?.guardian?.name || student?.guardianName || "-"}</span>
             </div>
             <div>
-              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Batch: </span>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px]">Batch: </span>
               <span className="font-bold text-slate-900">{student?.batch?.name || "-"}</span>
             </div>
             <div>
-              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Admission Date: </span>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px]">Admission Date: </span>
               <span className="font-bold text-slate-900">{student?.admissionDate ? date(student.admissionDate) : "-"}</span>
             </div>
             <div>
-              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Monthly Fee: </span>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px]">Monthly Fee: </span>
               <span className="font-bold text-slate-900">{money(effectiveMonthlyFee)}</span>
             </div>
           </div>
@@ -707,17 +726,17 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
 
         {/* Tabular Ledger Records */}
         <div>
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1.5">Fee Ledger Records</h2>
-          <table className="w-full border-collapse text-xs">
+          <h2 className="text-[10px] font-bold uppercase tracking-wider text-slate-700 mb-1">Fee Ledger Records</h2>
+          <table className="w-full border-collapse text-[11px]">
             <thead>
-              <tr className="bg-slate-100 text-left text-[10px] uppercase tracking-wider text-slate-800 border border-slate-400">
-                <th className="p-2 border border-slate-300 font-bold w-8 text-center">#</th>
-                <th className="p-2 border border-slate-300 font-bold">Tenure Period</th>
-                <th className="p-2 border border-slate-300 font-bold text-right">Fee (₹)</th>
-                <th className="p-2 border border-slate-300 font-bold text-right">Paid (₹)</th>
-                <th className="p-2 border border-slate-300 font-bold text-right">Balance Due (₹)</th>
-                <th className="p-2 border border-slate-300 font-bold text-center">Status</th>
-                <th className="p-2 border border-slate-300 font-bold">Receipts & Payment History</th>
+              <tr className="bg-slate-100 text-left text-[9px] uppercase tracking-wider text-slate-800 border border-slate-400">
+                <th className="p-1.5 border border-slate-300 font-bold w-7 text-center">#</th>
+                <th className="p-1.5 border border-slate-300 font-bold">Tenure Period</th>
+                <th className="p-1.5 border border-slate-300 font-bold text-right">Fee (₹)</th>
+                <th className="p-1.5 border border-slate-300 font-bold text-right">Paid (₹)</th>
+                <th className="p-1.5 border border-slate-300 font-bold text-right">Balance Due (₹)</th>
+                <th className="p-1.5 border border-slate-300 font-bold text-center">Status</th>
+                <th className="p-1.5 border border-slate-300 font-bold">Receipts & History</th>
               </tr>
             </thead>
             <tbody>
@@ -727,18 +746,18 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
                 const balance = (t.totalAmount - (t.discount || 0)) - paid;
 
                 return (
-                  <tr key={t._id || idx} className="border border-slate-300">
-                    <td className="p-2 border border-slate-300 text-center font-medium text-slate-600">{idx + 1}</td>
-                    <td className="p-2 border border-slate-300 font-bold">{formatTenureLabel(t.periodStart, t.periodEnd)}</td>
-                    <td className="p-2 border border-slate-300 text-right font-medium">{money(t.totalAmount)}</td>
-                    <td className="p-2 border border-slate-300 text-right font-bold text-emerald-800">{money(paid)}</td>
-                    <td className="p-2 border border-slate-300 text-right font-bold text-rose-800">{money(balance)}</td>
-                    <td className="p-2 border border-slate-300 text-center uppercase font-bold text-[10px]">{t.status}</td>
-                    <td className="p-2 border border-slate-300 text-[10px]">
+                  <tr key={t._id || idx} className="border border-slate-300 page-break-avoid">
+                    <td className="p-1.5 border border-slate-300 text-center font-medium text-slate-600">{idx + 1}</td>
+                    <td className="p-1.5 border border-slate-300 font-bold">{formatTenureLabel(t.periodStart, t.periodEnd)}</td>
+                    <td className="p-1.5 border border-slate-300 text-right font-medium">{money(t.totalAmount)}</td>
+                    <td className="p-1.5 border border-slate-300 text-right font-bold text-emerald-800">{money(paid)}</td>
+                    <td className="p-1.5 border border-slate-300 text-right font-bold text-rose-800">{money(balance)}</td>
+                    <td className="p-1.5 border border-slate-300 text-center uppercase font-bold text-[9px]">{t.status}</td>
+                    <td className="p-1.5 border border-slate-300 text-[9.5px]">
                       {activePayments.length > 0 ? (
                         activePayments.map((p, pIdx) => (
-                          <div key={pIdx} className="text-slate-800">
-                            {date(p.paidAt)}: <span className="font-bold">{money(p.amount)}</span> ({p.method?.toUpperCase()}) <span className="font-mono text-[9px] text-slate-500">[{p.receiptNo}]</span>
+                          <div key={pIdx} className="text-slate-800 leading-tight">
+                            {date(p.paidAt)}: <span className="font-bold">{money(p.amount)}</span> ({p.method?.toUpperCase()}) <span className="font-mono text-[8.5px] text-slate-500">[{p.receiptNo}]</span>
                           </div>
                         ))
                       ) : (
@@ -750,12 +769,12 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
               })}
             </tbody>
             <tfoot>
-              <tr className="bg-slate-100 font-bold text-xs border-2 border-slate-400">
-                <td colSpan="2" className="p-2 border border-slate-300 text-right uppercase">Total:</td>
-                <td className="p-2 border border-slate-300 text-right">{money(expectedTotal)}</td>
-                <td className="p-2 border border-slate-300 text-right text-emerald-800">{money(totalPaid)}</td>
-                <td className="p-2 border border-slate-300 text-right text-rose-800">{money(totalDue)}</td>
-                <td colSpan="2" className="p-2 border border-slate-300 text-center uppercase font-black text-slate-900">
+              <tr className="bg-slate-100 font-bold text-[11px] border-2 border-slate-400 page-break-avoid">
+                <td colSpan="2" className="p-1.5 border border-slate-300 text-right uppercase">Total:</td>
+                <td className="p-1.5 border border-slate-300 text-right">{money(expectedTotal)}</td>
+                <td className="p-1.5 border border-slate-300 text-right text-emerald-800">{money(totalPaid)}</td>
+                <td className="p-1.5 border border-slate-300 text-right text-rose-800">{money(totalDue)}</td>
+                <td colSpan="2" className="p-1.5 border border-slate-300 text-center uppercase font-black text-slate-900">
                   {totalDue === 0 ? "Fully Paid" : `Outstanding Dues: ${money(totalDue)}`}
                 </td>
               </tr>
@@ -764,13 +783,13 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
         </div>
 
         {/* Declaration & Signature */}
-        <div className="pt-6 flex justify-between items-end text-xs text-slate-600">
+        <div className="pt-3 flex justify-between items-end text-[10px] text-slate-600 page-break-avoid">
           <div>
-            <p className="text-[10px] text-slate-500 italic">Computer generated official statement. Subject to realization of cheques/UPI transfers.</p>
+            <p className="text-[9px] text-slate-500 italic">Computer generated official statement. Subject to realization of cheques/UPI transfers.</p>
           </div>
           <div className="text-center">
-            <div className="h-10 border-b border-slate-400 w-36 mb-1"></div>
-            <p className="font-bold text-slate-800 text-[11px]">Authorized Signature</p>
+            <div className="h-8 border-b border-slate-400 w-32 mb-0.5"></div>
+            <p className="font-bold text-slate-800 text-[10px]">Authorized Signature</p>
           </div>
         </div>
       </div>
