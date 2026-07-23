@@ -289,7 +289,7 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6 print:block">
+      <div className="grid lg:grid-cols-3 gap-6 print:hidden">
         
         {/* Left Column */}
         <div className="lg:col-span-2 space-y-6">
@@ -657,6 +657,123 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
           recipientName={waModal.recipientName}
         />
       )}
+
+      {/* Printable Fee Statement / Ledger (Visible ONLY on print) */}
+      <div className="hidden print:block font-sans p-4 text-black bg-white space-y-5">
+        {/* Institute Header */}
+        <div className="border-b-2 border-slate-900 pb-3 flex justify-between items-end">
+          <div>
+            <h1 className="text-2xl font-black uppercase tracking-wider text-slate-900">Kishan Classes</h1>
+            <p className="text-xs text-slate-600 font-semibold mt-0.5">Official Student Fee Statement & Ledger</p>
+          </div>
+          <div className="text-right text-xs text-slate-600">
+            <p className="font-bold text-slate-800">Date Generated:</p>
+            <p className="font-medium">{new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+          </div>
+        </div>
+
+        {/* Student Information Box */}
+        <div className="bg-slate-50 border border-slate-300 rounded-lg p-3.5">
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-2 border-b border-slate-200 pb-1">
+            Student & Admission Details
+          </h2>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+            <div>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Student Name: </span>
+              <span className="font-bold text-slate-900">{student?.user?.name || student?.name || "-"}</span>
+            </div>
+            <div>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Student ID: </span>
+              <span className="font-bold text-slate-900">{student?.studentId || "-"}</span>
+            </div>
+            <div>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Guardian: </span>
+              <span className="font-bold text-slate-900">{student?.guardian?.name || student?.guardianName || "-"}</span>
+            </div>
+            <div>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Batch: </span>
+              <span className="font-bold text-slate-900">{student?.batch?.name || "-"}</span>
+            </div>
+            <div>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Admission Date: </span>
+              <span className="font-bold text-slate-900">{student?.admissionDate ? date(student.admissionDate) : "-"}</span>
+            </div>
+            <div>
+              <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Monthly Fee: </span>
+              <span className="font-bold text-slate-900">{money(effectiveMonthlyFee)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Tabular Ledger Records */}
+        <div>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1.5">Fee Ledger Records</h2>
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="bg-slate-100 text-left text-[10px] uppercase tracking-wider text-slate-800 border border-slate-400">
+                <th className="p-2 border border-slate-300 font-bold w-8 text-center">#</th>
+                <th className="p-2 border border-slate-300 font-bold">Tenure Period</th>
+                <th className="p-2 border border-slate-300 font-bold text-right">Fee (₹)</th>
+                <th className="p-2 border border-slate-300 font-bold text-right">Paid (₹)</th>
+                <th className="p-2 border border-slate-300 font-bold text-right">Balance Due (₹)</th>
+                <th className="p-2 border border-slate-300 font-bold text-center">Status</th>
+                <th className="p-2 border border-slate-300 font-bold">Receipts & Payment History</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tenures.map((t, idx) => {
+                const activePayments = t.payments?.filter(p => !p.status || p.status === "active") || [];
+                const paid = activePayments.reduce((sum, p) => sum + p.amount, 0);
+                const balance = (t.totalAmount - (t.discount || 0)) - paid;
+
+                return (
+                  <tr key={t._id || idx} className="border border-slate-300">
+                    <td className="p-2 border border-slate-300 text-center font-medium text-slate-600">{idx + 1}</td>
+                    <td className="p-2 border border-slate-300 font-bold">{formatTenureLabel(t.periodStart, t.periodEnd)}</td>
+                    <td className="p-2 border border-slate-300 text-right font-medium">{money(t.totalAmount)}</td>
+                    <td className="p-2 border border-slate-300 text-right font-bold text-emerald-800">{money(paid)}</td>
+                    <td className="p-2 border border-slate-300 text-right font-bold text-rose-800">{money(balance)}</td>
+                    <td className="p-2 border border-slate-300 text-center uppercase font-bold text-[10px]">{t.status}</td>
+                    <td className="p-2 border border-slate-300 text-[10px]">
+                      {activePayments.length > 0 ? (
+                        activePayments.map((p, pIdx) => (
+                          <div key={pIdx} className="text-slate-800">
+                            {date(p.paidAt)}: <span className="font-bold">{money(p.amount)}</span> ({p.method?.toUpperCase()}) <span className="font-mono text-[9px] text-slate-500">[{p.receiptNo}]</span>
+                          </div>
+                        ))
+                      ) : (
+                        <span className="text-slate-400 italic">No payment</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-100 font-bold text-xs border-2 border-slate-400">
+                <td colSpan="2" className="p-2 border border-slate-300 text-right uppercase">Total:</td>
+                <td className="p-2 border border-slate-300 text-right">{money(expectedTotal)}</td>
+                <td className="p-2 border border-slate-300 text-right text-emerald-800">{money(totalPaid)}</td>
+                <td className="p-2 border border-slate-300 text-right text-rose-800">{money(totalDue)}</td>
+                <td colSpan="2" className="p-2 border border-slate-300 text-center uppercase font-black text-slate-900">
+                  {totalDue === 0 ? "Fully Paid" : `Outstanding Dues: ${money(totalDue)}`}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        {/* Declaration & Signature */}
+        <div className="pt-6 flex justify-between items-end text-xs text-slate-600">
+          <div>
+            <p className="text-[10px] text-slate-500 italic">Computer generated official statement. Subject to realization of cheques/UPI transfers.</p>
+          </div>
+          <div className="text-center">
+            <div className="h-10 border-b border-slate-400 w-36 mb-1"></div>
+            <p className="font-bold text-slate-800 text-[11px]">Authorized Signature</p>
+          </div>
+        </div>
+      </div>
 
     </div>
   );
