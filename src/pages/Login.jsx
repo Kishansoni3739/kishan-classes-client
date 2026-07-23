@@ -49,7 +49,7 @@ export const Login = () => {
       navigate("/");
     } catch (err) {
       console.error("[LOGIN PAGE] Login Error Details:", err);
-      
+
       if (!err.response) {
         setError("Unable to connect to server. Please check your network connection or server status.");
       } else {
@@ -92,11 +92,10 @@ export const Login = () => {
           <button
             type="button"
             onClick={() => { setActiveRole("admin"); setError(""); }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition-all ${
-              activeRole === "admin"
-                ? "bg-white text-brand shadow-sm"
-                : "hover:text-slate-900"
-            }`}
+            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition-all ${activeRole === "admin"
+              ? "bg-white text-brand shadow-sm"
+              : "hover:text-slate-900"
+              }`}
           >
             <Shield size={14} />
             Admin
@@ -104,11 +103,10 @@ export const Login = () => {
           <button
             type="button"
             onClick={() => { setActiveRole("teacher"); setError(""); }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition-all ${
-              activeRole === "teacher"
-                ? "bg-white text-brand shadow-sm"
-                : "hover:text-slate-900"
-            }`}
+            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition-all ${activeRole === "teacher"
+              ? "bg-white text-brand shadow-sm"
+              : "hover:text-slate-900"
+              }`}
           >
             <School size={14} />
             Teacher
@@ -116,11 +114,10 @@ export const Login = () => {
           <button
             type="button"
             onClick={() => { setActiveRole("student"); setError(""); }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition-all ${
-              activeRole === "student"
-                ? "bg-white text-brand shadow-sm"
-                : "hover:text-slate-900"
-            }`}
+            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition-all ${activeRole === "student"
+              ? "bg-white text-brand shadow-sm"
+              : "hover:text-slate-900"
+              }`}
           >
             <GraduationCap size={14} />
             Student
@@ -178,13 +175,13 @@ export const Login = () => {
         {!Capacitor.isNativePlatform() && (
           <div className="pt-1 text-center">
             <a
-              href={import.meta.env.VITE_ANDROID_APK_URL || "/kishan-classes.apk"}
-              download="kishan-classes.apk"
+              href={import.meta.env.VITE_ANDROID_APK_URL || "/AndroidFile/app-release.apk"}
+              download="app-release.apk"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex w-full items-center justify-center gap-2.5 rounded-xl border border-slate-200 bg-white py-3 px-4 text-sm font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:text-brand hover:border-brand/30 hover:shadow active:scale-[0.99]"
             >
-              <Smartphone size={18} className="text-brand" />
+              <img src="/favicon.svg" alt="App Logo" className="h-5 w-5 rounded-md shadow-sm" />
               <span>Download Android Application</span>
               <Download size={16} className="text-slate-400" />
             </a>
