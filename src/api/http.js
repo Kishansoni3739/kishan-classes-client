@@ -2,14 +2,21 @@ import axios from "axios";
 
 let rawUrl = import.meta.env.VITE_API_URL || "";
 
+// Automatically fix typo domain kishan-classes-server.onrender.com -> kishan-classes.onrender.com
+if (rawUrl.includes("kishan-classes-server.onrender.com")) {
+  rawUrl = rawUrl.replace("kishan-classes-server.onrender.com", "kishan-classes.onrender.com");
+}
+
+// Production web fallback for Vercel/live web if env var is missing or invalid
+if (!rawUrl || rawUrl === "/api") {
+  if (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+    rawUrl = "https://kishan-classes.onrender.com/api";
+  }
+}
+
 // Ensure /api path suffix is present if a base domain was supplied
 if (rawUrl && !rawUrl.endsWith("/api") && !rawUrl.endsWith("/api/")) {
   rawUrl = `${rawUrl.replace(/\/$/, "")}/api`;
-}
-
-// Fallback for native Capacitor Android apps if env var is missing or blank
-if (!rawUrl && typeof window !== "undefined" && (window.location.protocol === "https:" && window.location.hostname === "localhost")) {
-  rawUrl = "https://kishan-classes.onrender.com/api";
 }
 
 export const API_URL = rawUrl || "/api";
