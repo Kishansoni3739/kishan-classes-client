@@ -44,7 +44,7 @@ export const AdminDashboard = () => {
   const totalCollected = cards.monthlyFeeCollection ?? data.totalCollected ?? 0;
   const totalPending = cards.pendingFees ?? data.totalPending ?? 0;
   const recentNotices = data.recentNotices || [];
-  const upcomingTests = data.upcomingTests || [];
+  const recentTests = data.recentTests || data.upcomingTests || [];
 
   return (
     <div className="space-y-6">
