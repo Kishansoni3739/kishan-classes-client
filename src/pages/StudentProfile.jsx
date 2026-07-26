@@ -288,9 +288,23 @@ export const StudentProfile = () => {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowWaMenu(false)} />
                 <div className="absolute right-0 mt-2 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 py-1 divide-y divide-slate-100">
-                  {templates.filter((t) => t.isActive !== false).length > 0 ? (
+                  {templates
+                    .filter((t) => {
+                      if (t.isActive === false) return false;
+                      if (authUser.role === "teacher") {
+                        return t.allowTeacher === true;
+                      }
+                      return true;
+                    })
+                    .length > 0 ? (
                     templates
-                      .filter((t) => t.isActive !== false)
+                      .filter((t) => {
+                        if (t.isActive === false) return false;
+                        if (authUser.role === "teacher") {
+                          return t.allowTeacher === true;
+                        }
+                        return true;
+                      })
                       .map((t) => (
                         <button
                           key={t._id}

@@ -421,57 +421,103 @@ export const StudentProgressTab = ({ student, results = [] }) => {
             </div>
           </div>
 
-          {/* All Test Results (Screen - shows ALL attempted + absent) */}
+          {/* All Test Results (Screen - Modern Mobile-First Cards) */}
           {results.length > 0 && (
-            <div className="p-5 rounded-xl border border-slate-100 bg-white shadow-sm mt-6">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-ink flex items-center gap-2 mb-4">
-                <Calendar size={16} className="text-brand"/> All Test Results ({results.length} total)
-              </h3>
-              <div className="overflow-x-auto border border-slate-100 rounded-lg">
-                <table className="min-w-full text-xs md:text-sm text-left">
-                  <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 border-b border-slate-100">
-                    <tr>
-                      <th className="px-4 py-3 font-bold">Date</th>
-                      <th className="px-4 py-3 font-bold">Test Title</th>
-                      <th className="px-4 py-3 font-bold">Subject</th>
-                      <th className="px-4 py-3 font-bold text-right">Marks</th>
-                      <th className="px-4 py-3 font-bold text-right">Percentage</th>
-                      <th className="px-4 py-3 font-bold">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {[...results]
-                      .filter(r => r.test?.testDate)
-                      .sort((a, b) => new Date(b.test.testDate) - new Date(a.test.testDate))
-                      .map((r, idx) => (
-                      <tr key={idx} className={`hover:bg-slate-50/50 ${r.isAbsent ? 'bg-rose-50/30' : ''}`}>
-                        <td className="px-4 py-3 font-medium whitespace-nowrap">{date(r.test?.testDate)}</td>
-                        <td className="px-4 py-3">
-                          <div className="font-bold text-ink">{r.test?.title}</div>
-                          <div className="text-[10px] text-slate-400 font-semibold">Topic: {r.test?.topic}</div>
-                        </td>
-                        <td className="px-4 py-3 font-semibold">{r.test?.subject?.name || "-"}</td>
-                        <td className="px-4 py-3 text-right font-bold">
-                          {r.isAbsent ? "-" : `${r.marksObtained} / ${r.test?.maxMarks}`}
-                        </td>
-                        <td className="px-4 py-3 text-right font-bold">
-                          {r.isAbsent ? "-" : `${Math.round(r.percentage)}%`}
-                        </td>
-                        <td className="px-4 py-3">
+            <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/80 bg-white shadow-sm mt-6 print:hidden">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-ink flex items-center gap-2">
+                  <Calendar size={16} className="text-brand"/> All Test Results ({results.length} total)
+                </h3>
+                <span className="text-xs text-slate-400 font-medium hidden sm:inline">Latest test results first</span>
+              </div>
+
+              {/* Modern Responsive Score List */}
+              <div className="space-y-3">
+                {[...results]
+                  .filter(r => r.test?.testDate)
+                  .sort((a, b) => new Date(b.test.testDate) - new Date(a.test.testDate))
+                  .map((r, idx) => {
+                    const testDateObj = new Date(r.test.testDate);
+                    const day = String(testDateObj.getDate()).padStart(2, "0");
+                    const month = testDateObj.toLocaleString("en-US", { month: "short" }).toUpperCase();
+                    const year = testDateObj.getFullYear();
+
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3.5 sm:p-4 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                          r.isAbsent
+                            ? 'bg-rose-50/40 border-rose-200/60'
+                            : r.percentage >= 80
+                            ? 'bg-emerald-50/20 border-slate-200 hover:border-emerald-300'
+                            : r.percentage >= 50
+                            ? 'bg-white border-slate-200 hover:border-brand/30'
+                            : 'bg-rose-50/20 border-slate-200 hover:border-rose-300'
+                        }`}
+                      >
+                        {/* Left Info: Date Badge + Title + Subject + Topic */}
+                        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                          {/* Date Pill */}
+                          <div className="flex flex-col items-center justify-center bg-slate-100 text-slate-700 rounded-xl px-2.5 py-1.5 min-w-[50px] shrink-0 border border-slate-200 font-bold">
+                            <span className="text-[10px] uppercase tracking-wider leading-none text-slate-500">{month}</span>
+                            <span className="text-base font-black leading-none mt-0.5 text-slate-800">{day}</span>
+                          </div>
+
+                          {/* Title & Metadata */}
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-extrabold uppercase tracking-wider text-brand bg-brand/10 px-2 py-0.5 rounded-md">
+                                {r.test?.subject?.name || "Subject"}
+                              </span>
+                              <span className="text-xs text-slate-400 font-medium">{year}</span>
+                            </div>
+                            <h4 className="font-bold text-sm sm:text-base text-ink leading-snug truncate">
+                              {r.test?.title}
+                            </h4>
+                            {r.test?.topic && (
+                              <p className="text-xs text-slate-500 truncate">
+                                Topic: <span className="font-medium">{r.test.topic}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Right Info: Score & Status Pill */}
+                        <div className="flex items-center justify-between sm:justify-end gap-4 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100/80 shrink-0">
                           {r.isAbsent ? (
-                            <span className="px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-700 rounded uppercase tracking-wider">Absent</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-slate-400">Status:</span>
+                              <span className="px-3 py-1 text-xs font-bold bg-rose-100 text-rose-700 rounded-full uppercase tracking-wider">
+                                Absent
+                              </span>
+                            </div>
                           ) : (
-                            <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider ${
-                              r.percentage >= 80 ? 'bg-emerald-100 text-emerald-700' : r.percentage >= 50 ? 'bg-teal-100 text-teal-700' : 'bg-rose-100 text-rose-700'
-                            }`}>
-                              {r.percentage >= 80 ? 'Excellent' : r.percentage >= 50 ? 'Pass' : 'Critical'}
-                            </span>
+                            <>
+                              <div className="text-left sm:text-right">
+                                <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Marks</p>
+                                <p className="text-sm font-extrabold text-slate-800">
+                                  {r.marksObtained} <span className="text-xs font-normal text-slate-400">/ {r.test?.maxMarks}</span>
+                                </p>
+                              </div>
+
+                              <div className="text-right flex flex-col items-end min-w-[70px]">
+                                <span className={`text-base font-black ${
+                                  r.percentage >= 80 ? 'text-emerald-600' : r.percentage >= 50 ? 'text-brand' : 'text-rose-600'
+                                }`}>
+                                  {Math.round(r.percentage)}%
+                                </span>
+                                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full uppercase tracking-wider ${
+                                  r.percentage >= 80 ? 'bg-emerald-100 text-emerald-700' : r.percentage >= 50 ? 'bg-teal-100 text-teal-700' : 'bg-rose-100 text-rose-700'
+                                }`}>
+                                  {r.percentage >= 80 ? 'Excellent' : r.percentage >= 50 ? 'Pass' : 'Critical'}
+                                </span>
+                              </div>
+                            </>
                           )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}

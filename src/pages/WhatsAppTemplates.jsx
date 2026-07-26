@@ -111,7 +111,14 @@ export const WhatsAppTemplates = () => {
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <h3 className="font-bold text-slate-800">{template.name}</h3>
-                  <span className="text-xs font-semibold text-brand bg-brand/10 px-2 py-0.5 rounded-full">{template.category}</span>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-xs font-semibold text-brand bg-brand/10 px-2 py-0.5 rounded-full">{template.category}</span>
+                    {template.allowTeacher ? (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">Teacher Allowed</span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">Admin Only</span>
+                    )}
+                  </div>
                 </div>
                 {template.isDefault ? (
                   <span className="text-xs text-slate-400 font-medium">Default</span>
@@ -207,14 +214,19 @@ const TemplateEditorModal = ({ template, isCreating, onClose, onSave }) => {
     name: template?.name || "",
     category: template?.category || "Custom",
     messageBody: template?.messageBody || "",
-    variables: template?.variables || []
+    variables: template?.variables || [],
+    allowTeacher: template ? Boolean(template.allowTeacher) : false,
   });
   const [saving, setSaving] = useState(false);
 
   const previewText = generateWhatsAppMessage(formData, dummyContext);
 
   const handleChange = (e) => {
-    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : value
+    }));
   };
 
   const insertVariable = (variableName) => {
@@ -289,6 +301,25 @@ const TemplateEditorModal = ({ template, isCreating, onClose, onSave }) => {
                   className="w-full border-slate-300 rounded-md focus:ring-brand focus:border-brand text-sm disabled:bg-slate-100"
                 />
               </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="allowTeacherCheckbox"
+                  name="allowTeacher"
+                  checked={formData.allowTeacher}
+                  onChange={handleChange}
+                  className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand cursor-pointer"
+                />
+                <label htmlFor="allowTeacherCheckbox" className="text-sm font-semibold text-slate-800 cursor-pointer">
+                  Allow Teachers to send this template
+                </label>
+              </div>
+              <p className="text-xs text-slate-500 pl-6">
+                If enabled, teachers assigned to batches will be allowed to send this WhatsApp template to students and guardians.
+              </p>
             </div>
 
             <div>
