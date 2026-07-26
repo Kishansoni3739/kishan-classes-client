@@ -1,13 +1,20 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { 
   TrendingUp, Award, AlertCircle, Download, BookOpen, 
-  Calendar, CheckCircle, Clock, Sparkles, User, ShieldAlert 
+  Calendar, CheckCircle, Clock, Sparkles, User, ShieldAlert,
+  Loader2
 } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { date } from "../utils/format.js";
 import { EmptyState } from "./EmptyState.jsx";
+import { pdfGeneratorService } from "../services/pdfGeneratorService.js";
+import { fileOpenerService } from "../services/fileOpenerService.js";
+import { useDownloadNotification } from "../context/DownloadNotificationContext.jsx";
 
 export const StudentProgressTab = ({ student, results = [] }) => {
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const downloadContext = useDownloadNotification();
+  const triggerNotification = downloadContext?.triggerDownloadNotification;
   // 1. Calculations - Overall metrics
   const overallStats = useMemo(() => {
     const completed = results.filter(r => !r.isAbsent && r.percentage !== undefined);
@@ -123,8 +130,33 @@ export const StudentProgressTab = ({ student, results = [] }) => {
     return <EmptyState title="No Progress Data" message="No completed test scores found for this student to generate a progress report." />;
   }
 
-  const handleDownloadPDF = () => {
-    window.print();
+  const handleDownloadPDF = async () => {
+    setGeneratingPdf(true);
+    const reportElem = document.getElementById("student-progress-report-print");
+    try {
+      if (reportElem) {
+        reportElem.classList.remove("hidden");
+      }
+      const studentName = (student?.user?.name || "Student").replace(/[^a-zA-Z0-9]/g, "_");
+      const filename = `Progress_Report_${studentName}_${Date.now()}.pdf`;
+
+      await pdfGeneratorService.generateAndSavePdf({
+        element: reportElem || document.body,
+        filename,
+        title: `Progress Report: ${student?.user?.name || "Student"}`,
+        triggerNotification,
+      });
+
+      fileOpenerService.printDocument().catch(() => {});
+    } catch (err) {
+      console.error("[STUDENT PROGRESS TAB] PDF generation error:", err);
+      window.print();
+    } finally {
+      if (reportElem) {
+        reportElem.classList.add("hidden");
+      }
+      setGeneratingPdf(false);
+    }
   };
 
   // Modern print styling to compress layout to exactly 1 A4 page and eliminate overflow pages
@@ -175,9 +207,18 @@ export const StudentProgressTab = ({ student, results = [] }) => {
           </div>
           <button 
             onClick={handleDownloadPDF}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-brand rounded-md hover:bg-brand/90 shadow-sm transition-colors cursor-pointer"
+            disabled={generatingPdf}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-brand rounded-md hover:bg-brand/90 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
           >
-            <Download size={16} /> Download PDF Report
+            {generatingPdf ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> Generating PDF...
+              </>
+            ) : (
+              <>
+                <Download size={16} /> Download PDF Report
+              </>
+            )}
           </button>
         </div>
 
@@ -440,7 +481,7 @@ export const StudentProgressTab = ({ student, results = [] }) => {
       {/* ========================================================================= */}
       {/* 2. PRINT LAYOUT ONLY (COMPRESSED SINGLE A4 PAGE LAYOUT)                  */}
       {/* ========================================================================= */}
-      <div className="hidden print:block w-full max-w-4xl mx-auto p-4 bg-white text-ink text-xs print-layout">
+      <div id="student-progress-report-print" className="hidden print:block w-full max-w-4xl mx-auto p-4 bg-white text-ink text-xs print-layout">
         
         {/* Header with Title and Circle Score Gauge */}
         <div className="flex justify-between items-center border-b-2 border-brand pb-3 mb-3">

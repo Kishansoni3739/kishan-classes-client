@@ -91,7 +91,31 @@ export const shareLocalFile = async ({ localPath, filename, title }) => {
   }
 };
 
+/**
+ * Print Document (Native Android PrintManager adapter or browser window.print)
+ */
+export const printDocument = async () => {
+  try {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await NativeFileOpener.print();
+        return true;
+      } catch (e) {
+        window.print();
+        return true;
+      }
+    } else {
+      window.print();
+      return true;
+    }
+  } catch (err) {
+    console.error("[FILE OPENER SERVICE] Print error:", err);
+    window.print();
+  }
+};
+
 export const fileOpenerService = {
   openLocalFile,
   shareLocalFile,
+  printDocument,
 };

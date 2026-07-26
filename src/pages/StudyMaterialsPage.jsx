@@ -16,11 +16,14 @@ import { historyService } from "../services/historyService.js";
 import { downloadService } from "../services/downloadService.js";
 import { fileOpenerService } from "../services/fileOpenerService.js";
 import { DuplicateDownloadModal } from "../components/DuplicateDownloadModal.jsx";
+import { useDownloadNotification } from "../context/DownloadNotificationContext.jsx";
 
 export const StudyMaterialsPage = () => {
   const { user } = useAuth();
   const role = user?.role || "student";
   const [searchParams, setSearchParams] = useSearchParams();
+  const downloadContext = useDownloadNotification();
+  const triggerNotification = downloadContext?.triggerDownloadNotification;
 
   // Download Manager States
   const [downloadHistoryMap, setDownloadHistoryMap] = useState({});
@@ -481,15 +484,24 @@ export const StudyMaterialsPage = () => {
       showToast(`Downloaded ${fileObj.name} successfully!`, "success");
       await refreshDownloadHistory();
 
-      setDownloadNotification({
-        isOpen: true,
-        materialId: materialItem._id,
-        fileId,
-        filename: downloadRes.record?.filename || fileObj.name,
-        localPath: downloadRes.record?.localPath,
-        mimeType: downloadRes.record?.mimeType || fileObj.mimeType,
-        title: materialItem.title || fileObj.name,
-      });
+      if (triggerNotification) {
+        triggerNotification({
+          filename: downloadRes.record?.filename || fileObj.name,
+          localPath: downloadRes.record?.localPath,
+          mimeType: downloadRes.record?.mimeType || fileObj.mimeType,
+          title: materialItem.title || fileObj.name,
+        });
+      } else {
+        setDownloadNotification({
+          isOpen: true,
+          materialId: materialItem._id,
+          fileId,
+          filename: downloadRes.record?.filename || fileObj.name,
+          localPath: downloadRes.record?.localPath,
+          mimeType: downloadRes.record?.mimeType || fileObj.mimeType,
+          title: materialItem.title || fileObj.name,
+        });
+      }
     } catch (err) {
       showToast(err.message || "Failed to download material", "error");
     } finally {

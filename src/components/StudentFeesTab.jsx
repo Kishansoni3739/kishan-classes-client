@@ -14,9 +14,13 @@ import {
   Calendar, 
   TrendingUp,
   X,
-  Undo2
+  Undo2,
+  Loader2
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
+import { pdfGeneratorService } from "../services/pdfGeneratorService.js";
+import { fileOpenerService } from "../services/fileOpenerService.js";
+import { useDownloadNotification } from "../context/DownloadNotificationContext.jsx";
 
 const SectionCard = ({ title, icon: Icon, children, className = "" }) => (
   <div className={`overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm flex flex-col ${className}`}>
@@ -38,6 +42,9 @@ const EmptyState = ({ message }) => (
 );
 
 export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const downloadContext = useDownloadNotification();
+  const triggerNotification = downloadContext?.triggerDownloadNotification;
   const { student, monthlyTenures = [] } = profile;
   const { user } = useAuth();
   
@@ -223,8 +230,33 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = async () => {
+    setGeneratingPdf(true);
+    const ledgerElem = document.getElementById("student-fee-statement-print");
+    try {
+      if (ledgerElem) {
+        ledgerElem.classList.remove("hidden");
+      }
+      const studentName = (student?.user?.name || "Student").replace(/[^a-zA-Z0-9]/g, "_");
+      const filename = `Fee_Statement_${studentName}_${Date.now()}.pdf`;
+
+      await pdfGeneratorService.generateAndSavePdf({
+        element: ledgerElem || document.body,
+        filename,
+        title: `Fee Statement: ${student?.user?.name || "Student"}`,
+        triggerNotification,
+      });
+
+      fileOpenerService.printDocument().catch(() => {});
+    } catch (err) {
+      console.error("[STUDENT FEES TAB] Print PDF error:", err);
+      window.print();
+    } finally {
+      if (ledgerElem) {
+        ledgerElem.classList.add("hidden");
+      }
+      setGeneratingPdf(false);
+    }
   };
 
   return (
@@ -237,8 +269,20 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
           {health.label}
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={handlePrint} className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors">
-            <Printer size={16} /> Print Statement
+          <button 
+            onClick={handlePrint}
+            disabled={generatingPdf}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {generatingPdf ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> Generating PDF...
+              </>
+            ) : (
+              <>
+                <Printer size={16} /> Print Statement
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -659,7 +703,7 @@ export const StudentFeesTab = ({ profile, onPaymentSuccess }) => {
       )}
 
       {/* Printable Fee Statement / Ledger (Visible ONLY on print) */}
-      <div className="hidden print:block font-sans text-black bg-white space-y-3 print-ledger-container">
+      <div id="student-fee-statement-print" className="hidden print:block font-sans text-black bg-white space-y-3 print-ledger-container">
         <style>{`
           @media print {
             @page {

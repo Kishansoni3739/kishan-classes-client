@@ -55,4 +55,22 @@ public class NativeFileOpenerPlugin extends Plugin {
             call.reject("Failed to open file: " + e.getMessage(), e);
         }
     }
+
+    @PluginMethod
+    public void print(PluginCall call) {
+        try {
+            getActivity().runOnUiThread(() -> {
+                try {
+                    android.print.PrintManager printManager = (android.print.PrintManager) getContext().getSystemService(Context.PRINT_SERVICE);
+                    android.print.PrintDocumentAdapter printAdapter = getBridge().getWebView().createPrintDocumentAdapter("Kishan Classes Document");
+                    printManager.print("Kishan Classes Document", printAdapter, null);
+                    call.resolve();
+                } catch (Exception e) {
+                    call.reject("Print error: " + e.getMessage(), e);
+                }
+            });
+        } catch (Exception e) {
+            call.reject("Print error: " + e.getMessage(), e);
+        }
+    }
 }
