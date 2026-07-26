@@ -233,18 +233,22 @@ export const StudentProfile = () => {
               {showWaMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowWaMenu(false)} />
-                  <div className="absolute right-0 mt-1 w-48 bg-white border border-slate-200 rounded-md shadow-lg z-50 py-1">
-                    {templates.filter(t => t.category === "Student" || t.category === "Progress" || t.category === "Notices").map(t => (
-                      <button
-                        key={t._id}
-                        className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-brand"
-                        onClick={() => handleSendWa(t)}
-                      >
-                        {t.name}
-                      </button>
-                    ))}
-                    {templates.length === 0 && (
-                      <div className="px-4 py-2 text-sm text-slate-400">No templates</div>
+                  <div className="absolute right-0 mt-1 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1 divide-y divide-slate-100">
+                    {templates.filter(t => t.isActive !== false).length > 0 ? (
+                      templates.filter(t => t.isActive !== false).map(t => (
+                        <button
+                          key={t._id}
+                          className="w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors group flex flex-col gap-0.5"
+                          onClick={() => handleSendWa(t)}
+                        >
+                          <span className="text-sm font-medium text-slate-800 group-hover:text-brand truncate">{t.name}</span>
+                          {t.category && (
+                            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">{t.category}</span>
+                          )}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-4 py-3 text-sm text-slate-400 text-center">No templates available</div>
                     )}
                   </div>
                 </>

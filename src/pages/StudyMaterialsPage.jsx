@@ -3,7 +3,7 @@ import {
   Plus, Search, Filter, Download, Eye, Pencil, Trash2, 
   Copy, FileText, Link, Share2, AlertCircle, X, Check, 
   Loader2, File, Image, UploadCloud, ChevronRight, RefreshCw,
-  ExternalLink
+  ExternalLink, CheckCircle
 } from "lucide-react";
 import { api, API_URL } from "../api/http.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -25,6 +25,7 @@ export const StudyMaterialsPage = () => {
   // Download Manager States
   const [downloadHistoryMap, setDownloadHistoryMap] = useState({});
   const [downloadProgress, setDownloadProgress] = useState({});
+  const [downloadNotification, setDownloadNotification] = useState(null);
   const [duplicateModal, setDuplicateModal] = useState({
     isOpen: false,
     materialItem: null,
@@ -465,7 +466,7 @@ export const StudyMaterialsPage = () => {
     setDownloadProgress((prev) => ({ ...prev, [key]: 1 }));
 
     try {
-      await downloadService.downloadMaterialFile({
+      const downloadRes = await downloadService.downloadMaterialFile({
         materialId: materialItem._id,
         fileId,
         title: materialItem.title,
@@ -479,6 +480,16 @@ export const StudyMaterialsPage = () => {
 
       showToast(`Downloaded ${fileObj.name} successfully!`, "success");
       await refreshDownloadHistory();
+
+      setDownloadNotification({
+        isOpen: true,
+        materialId: materialItem._id,
+        fileId,
+        filename: downloadRes.record?.filename || fileObj.name,
+        localPath: downloadRes.record?.localPath,
+        mimeType: downloadRes.record?.mimeType || fileObj.mimeType,
+        title: materialItem.title || fileObj.name,
+      });
     } catch (err) {
       showToast(err.message || "Failed to download material", "error");
     } finally {
@@ -1742,15 +1753,45 @@ export const StudyMaterialsPage = () => {
         />
       )}
 
-      {/* Duplicate Download Confirmation Modal */}
-      <DuplicateDownloadModal
-        isOpen={duplicateModal.isOpen}
-        filename={duplicateModal.filename}
-        onCancel={() => setDuplicateModal({ isOpen: false, materialItem: null, fileObj: null, filename: "" })}
-        onConfirm={() =>
-          handleInitiateDownload(duplicateModal.materialItem, duplicateModal.fileObj, true)
-        }
-      />
+      {/* Material Downloaded Pop-up Notification Banner */}
+      {downloadNotification && downloadNotification.isOpen && (
+        <div className="fixed bottom-5 right-5 z-50 max-w-md w-[92%] sm:w-full p-4 bg-slate-900 text-white rounded-xl shadow-2xl border border-slate-700 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="h-10 w-10 shrink-0 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+              <CheckCircle size={22} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Material Downloaded</p>
+              <p className="text-sm font-semibold truncate text-slate-100">{downloadNotification.filename}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={async () => {
+                try {
+                  await fileOpenerService.openLocalFile({
+                    localPath: downloadNotification.localPath,
+                    filename: downloadNotification.filename,
+                    mimeType: downloadNotification.mimeType,
+                  });
+                } catch (e) {
+                  showToast(e.message || "Could not open file.", "error");
+                }
+              }}
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow transition-colors flex items-center gap-1.5"
+            >
+              <ExternalLink size={14} /> Open
+            </button>
+            <button
+              onClick={() => setDownloadNotification(null)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+              title="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

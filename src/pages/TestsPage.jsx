@@ -87,16 +87,28 @@ export default function TestsPage() {
           limit: 100
         }
       });
-      // Filter out scheduled if history tab
+      let itemsList = data.items || [];
       if (activeTab === "history") {
-         setTests((data.items || []).filter(t => t.status !== "scheduled"));
-      } else {
-         setTests(data.items || []);
+         itemsList = itemsList.filter(t => t.status !== "scheduled");
       }
+      itemsList.sort((a, b) => new Date(b.testDate || b.createdAt).getTime() - new Date(a.testDate || a.createdAt).getTime());
+      setTests(itemsList);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to fetch tests");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteTest = async (test) => {
+    if (!window.confirm(`Are you sure you want to permanently delete the test "${test.title}" and all its student results?`)) {
+      return;
+    }
+    try {
+      await api.delete(`/tests/${test._id}`);
+      fetchTests();
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to delete test");
     }
   };
 
@@ -411,8 +423,20 @@ export default function TestsPage() {
                         </>
                       )}
                       {(test.status === 'completed' || test.status === 'cancelled') && (
-                        <button title="View Details" onClick={() => openViewModal(test)} className="px-3 py-1.5 text-sm font-medium bg-slate-100 text-slate-700 rounded-md hover:bg-slate-200 transition-colors flex items-center gap-1.5">
-                          <Eye size={15} /> View Details
+                        <>
+                          <button title="View Details" onClick={() => openViewModal(test)} className="px-3 py-1.5 text-sm font-medium bg-slate-100 text-slate-700 rounded-md hover:bg-slate-200 transition-colors flex items-center gap-1.5">
+                            <Eye size={15} /> View Details
+                          </button>
+                          {(user?.role === "admin" || user?.role === "teacher") && (
+                            <button title="Delete Test" onClick={() => handleDeleteTest(test)} className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-md transition-colors">
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </>
+                      )}
+                      {test.status === 'scheduled' && (user?.role === "admin" || user?.role === "teacher") && (
+                        <button title="Delete Test" onClick={() => handleDeleteTest(test)} className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-md transition-colors">
+                          <Trash2 size={16} />
                         </button>
                       )}
                     </div>

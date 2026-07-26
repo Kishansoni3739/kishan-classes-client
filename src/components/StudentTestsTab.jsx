@@ -13,7 +13,12 @@ export function StudentTestsTab({ student }) {
     const fetchTests = async () => {
       try {
         const { data } = await api.get(`/students/${student._id}/tests`);
-        setTests(data);
+        const sorted = (data || []).sort((a, b) => {
+          const dateA = a.test?.testDate ? new Date(a.test.testDate).getTime() : 0;
+          const dateB = b.test?.testDate ? new Date(b.test.testDate).getTime() : 0;
+          return dateB - dateA;
+        });
+        setTests(sorted);
       } catch (err) {
         setError("Could not load test history.");
       } finally {

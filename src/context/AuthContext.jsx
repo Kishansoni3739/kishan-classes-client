@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "../api/http.js";
+import { Capacitor } from "@capacitor/core";
+import { SplashScreen } from "@capacitor/splash-screen";
 
 const AuthContext = createContext(null);
 
@@ -16,11 +18,19 @@ export const AuthProvider = ({ children }) => {
     const saved = localStorage.getItem("kc_switchable_profiles");
     return saved ? JSON.parse(saved) : [];
   });
-  const [loading, setLoading] = useState(Boolean(localStorage.getItem("kc_token")));
+  const [loading, setLoading] = useState(() => {
+    const token = localStorage.getItem("kc_token");
+    const savedUser = localStorage.getItem("kc_user");
+    return Boolean(token && !savedUser);
+  });
 
   useEffect(() => {
     const token = localStorage.getItem("kc_token");
     if (!token) return;
+
+    if (Capacitor.isNativePlatform()) {
+      SplashScreen.hide().catch(() => {});
+    }
 
     api
       .get("/auth/me")
@@ -36,7 +46,11 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem("kc_profile", JSON.stringify(data.profile));
         localStorage.setItem("kc_switchable_profiles", JSON.stringify(data.switchableProfiles || []));
       })
-      .catch(() => logout())
+      .catch((err) => {
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          logout();
+        }
+      })
       .finally(() => setLoading(false));
   }, []);
 

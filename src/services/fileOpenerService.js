@@ -1,5 +1,29 @@
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { getWebBlobUrl } from "./fileStorageService.js";
+
+const NativeFileOpener = registerPlugin("NativeFileOpener");
+
+const getMimeType = (filename, defaultType) => {
+  if (defaultType && defaultType !== "application/octet-stream" && defaultType !== "undefined") {
+    return defaultType;
+  }
+  const ext = (filename || "").split(".").pop().toLowerCase();
+  switch (ext) {
+    case "pdf": return "application/pdf";
+    case "jpg":
+    case "jpeg": return "image/jpeg";
+    case "png": return "image/png";
+    case "webp": return "image/webp";
+    case "mp4": return "video/mp4";
+    case "mp3": return "audio/mpeg";
+    case "doc":
+    case "docx": return "application/msword";
+    case "xls":
+    case "xlsx": return "application/vnd.ms-excel";
+    case "txt": return "text/plain";
+    default: return defaultType || "*/*";
+  }
+};
 
 /**
  * Open local file offline without making network calls to ImageKit
@@ -7,12 +31,22 @@ import { getWebBlobUrl } from "./fileStorageService.js";
 export const openLocalFile = async ({ localPath, filename, mimeType }) => {
   try {
     if (Capacitor.isNativePlatform()) {
-      let webViewUrl = localPath;
-      if (localPath.startsWith("file://") || localPath.startsWith("/")) {
-        webViewUrl = Capacitor.convertFileSrc(localPath);
+      try {
+        const contentType = getMimeType(filename, mimeType);
+        await NativeFileOpener.open({
+          filePath: localPath,
+          contentType: contentType,
+        });
+        return true;
+      } catch (nativeErr) {
+        console.warn("[FILE OPENER SERVICE] Native plugin warning, falling back to convertFileSrc:", nativeErr);
+        let webViewUrl = localPath;
+        if (localPath.startsWith("file://") || localPath.startsWith("/")) {
+          webViewUrl = Capacitor.convertFileSrc(localPath);
+        }
+        window.open(webViewUrl, "_blank");
+        return true;
       }
-      window.open(webViewUrl, "_blank");
-      return true;
     } else {
       // Web platform: open blob URL
       let targetUrl = localPath;
